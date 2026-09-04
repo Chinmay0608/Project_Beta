@@ -6,9 +6,9 @@ from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.models import ATSProvider, CompanyConfig
 
 
-def test_company_registry_minimum_count() -> None:
-    """Verify registry contains at least 150 target GCCs and tech centers."""
-    assert len(COMPANIES) >= 150
+def test_company_registry_total_count() -> None:
+    """Verify registry contains exactly 319 target GCCs, banks, and tech centers."""
+    assert len(COMPANIES) == 319
 
 
 def test_company_registry_field_integrity() -> None:
@@ -94,3 +94,78 @@ def test_required_gcc_companies_present() -> None:
 
     missing = [target for target in required_targets if target not in registered_names]
     assert not missing, f"Missing required companies from registry: {missing}"
+
+
+def test_banking_gcc_companies_present() -> None:
+    """Verify all 30 requested banking giants and financial capability centers are present."""
+    registered_names = {c.name.lower() for c in COMPANIES}
+
+    required_banks = [
+        "citi",
+        "barclays",
+        "hsbc",
+        "deutsche bank",
+        "standard chartered",
+        "societe generale",
+        "bnp paribas",
+        "ubs",
+        "credit suisse",
+        "nomura",
+        "state street",
+        "northern trust",
+        "ing",
+        "rabobank",
+        "santander",
+        "bbva",
+        "credit agricole",
+        "natixis",
+        "capital one",
+        "discover",
+        "synchrony",
+        "american express",
+        "visa",
+        "mastercard",
+        "fidelity",
+        "vanguard",
+        "blackrock",
+        "franklin templeton",
+        "invesco",
+        "western union",
+    ]
+
+    missing = [b for b in required_banks if b not in registered_names]
+    assert not missing, f"Missing bank GCCs from registry: {missing}"
+
+
+def test_wfh_remote_companies_present() -> None:
+    """Verify Work From Home and distributed tech companies are registered."""
+    registered_names = {c.name.lower() for c in COMPANIES}
+
+    required_wfh = [
+        "canonical",
+        "mozilla",
+        "automattic",
+        "zapier",
+        "wikimedia foundation",
+        "netlify",
+        "bitwarden",
+        "tailscale",
+        "airbyte",
+        "pinecone",
+        "baseten",
+        "runpod",
+        "prisma",
+        "alchemy",
+        "uniswap",
+        "opensea",
+        "infisical",
+        "gitbook",
+        "mattermost",
+        "circleci",
+        "ghost",
+        "dremio",
+        "consensys",
+    ]
+
+    missing = [w for w in required_wfh if w not in registered_names]
+    assert not missing, f"Missing WFH companies from registry: {missing}"

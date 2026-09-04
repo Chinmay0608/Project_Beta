@@ -1,0 +1,2 @@
+[console_scripts]
+gcc-job-radar = gcc_job_radar.cli:app

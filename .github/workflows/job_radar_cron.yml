@@ -1,0 +1,63 @@
+name: Scheduled GCC Job Radar
+
+on:
+  schedule:
+    # Run every 4 hours UTC
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
+    inputs:
+      company:
+        description: 'Optional company name or token to filter scan'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  scan-and-notify:
+    runs-on: ubuntu-latest
+    env:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Restore SQLite database cache
+        uses: actions/cache@v4
+        with:
+          path: gcc_jobs.db
+          key: job-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            job-db-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Run GCC Job Radar Scan
+        run: |
+          if [ -n "${{ github.event.inputs.company }}" ]; then
+            gcc-job-radar --company "${{ github.event.inputs.company }}" --new-only --json latest_openings.json
+          else
+            gcc-job-radar --new-only --json latest_openings.json
+          fi
+
+      - name: Upload latest openings artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-openings
+          path: latest_openings.json
+          if-no-files-found: ignore
+          retention-days: 7

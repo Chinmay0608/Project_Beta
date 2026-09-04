@@ -6,8 +6,12 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Optional
+from dotenv import load_dotenv
 import httpx
 from rich.console import Console
+
+# Automatically load environment variables from .env if present
+load_dotenv()
 from rich.panel import Panel
 
 from gcc_job_radar import __version__

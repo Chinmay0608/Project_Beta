@@ -82,6 +82,12 @@ def test_matches_target_title_positive(title: str) -> None:
         "Account Executive",
         "Customer Support Associate",
         "Customer Success Specialist",
+        "Associate System Engineer, SE Excellence Center - ANZ",
+        "Solutions Engineer",
+        "Associate Solutions Engineer",
+        "Pre-Sales Engineer",
+        "Sales Engineer",
+        "Technical Support Engineer",
         "UI Engineer",  # Not explicitly entry level; verifies 'UI' does not falsely match roman 'ii'
         "Frontend Engineer",
         "Backend Developer",
@@ -90,8 +96,36 @@ def test_matches_target_title_positive(title: str) -> None:
     ],
 )
 def test_matches_target_title_negative(title: str) -> None:
-    """Verify that senior, staff, lead, numeral II+, and non-tech titles are disqualified."""
+    """Verify that senior, staff, lead, numeral II+, pre-sales, and non-tech titles are disqualified."""
     assert matches_target_title(title) is False
+
+
+@pytest.mark.parametrize(
+    "content,expected",
+    [
+        ("4+ years of experience (technology industry preferred)", True),
+        ("3+ years of experience in distributed systems", True),
+        ("5+ years of software engineering experience", True),
+        ("3-5 years of hands-on experience", True),
+        ("minimum 4 years of experience", True),
+        ("at least 3 years of experience", True),
+        ("experience: 5+ yrs", True),
+        ("1-3 years of hands-on software engineering experience", False),
+        ("0-2 years of experience", False),
+        ("0-1 years of experience", False),
+        ("1+ years of experience", False),
+        ("Freshers and 2024/2025 graduates welcome", False),
+        ("BS in Computer Science or equivalent practical experience", False),
+        ("<p>• 4+ years of experience (technology industry preferred)</p>", True),
+        ("&lt;li&gt;Minimum 3+ years of experience&lt;/li&gt;", True),
+        ("", False),
+        ("   ", False),
+    ],
+)
+def test_requires_experienced_candidate(content: str, expected: bool) -> None:
+    """Verify that roles requiring >= 3 years experience are disqualified while freshers pass."""
+    from gcc_job_radar.filters import requires_experienced_candidate
+    assert requires_experienced_candidate(content) is expected
 
 
 @pytest.mark.parametrize(

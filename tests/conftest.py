@@ -16,6 +16,7 @@ def isolate_test_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",
         "OPENAI_API_KEY",
+        "GROQ_API_KEY",
     ]
     for key in sensitive_keys:
         monkeypatch.delenv(key, raising=False)

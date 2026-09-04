@@ -6,7 +6,11 @@ import httpx
 from pydantic import ValidationError
 
 from gcc_job_radar.clients.base import BaseATSClient
-from gcc_job_radar.filters import matches_india_location, matches_target_title
+from gcc_job_radar.filters import (
+    matches_india_location,
+    matches_target_title,
+    requires_experienced_candidate,
+)
 from gcc_job_radar.models import ATSProvider, CompanyConfig, JobPosting
 
 logger = logging.getLogger(__name__)
@@ -50,6 +54,11 @@ class AshbyClient(BaseATSClient):
                     continue
 
                 if not (matches_india_location(location) or matches_india_location(combined_location)):
+                    continue
+
+                # Disqualify roles requiring 3+ years experience
+                content = job.get("descriptionPlain") or job.get("descriptionHtml") or ""
+                if requires_experienced_candidate(content):
                     continue
 
                 apply_url = job.get("jobUrl")

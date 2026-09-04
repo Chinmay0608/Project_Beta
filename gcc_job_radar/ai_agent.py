@@ -6,8 +6,13 @@ import logging
 import os
 from pathlib import Path
 import re
+import sys
 from typing import Any, Optional
+from dotenv import load_dotenv
 import httpx
+
+# Automatically load environment variables from .env if present
+load_dotenv()
 
 from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.db import get_stats, query_jobs, record_jobs
@@ -464,7 +469,7 @@ async def _call_gemini(
     db_path: Optional[Path] = None,
 ) -> str:
     """Call Google Gemini REST API with multi-turn tool calling and conversational synthesis."""
-    model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+    model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
     # Build multi-turn contents
@@ -484,14 +489,26 @@ async def _call_gemini(
     last_tool_result: dict[str, Any] = {}
 
     for _ in range(5):
-        resp = await client.post(url, json=payload, timeout=45.0)
+        try:
+            resp = await client.post(url, json=payload, timeout=45.0)
+        except Exception as exc:
+            err_msg = f"[AI Agent Error] Gemini request failed (connection/timeout): {exc}"
+            print(err_msg, file=sys.stderr)
+            logger.error(err_msg)
+            break
+
         if resp.status_code != 200:
-            logger.warning("Gemini API error %d: %s", resp.status_code, resp.text)
+            err_msg = f"[AI Agent Error] Gemini API error (HTTP {resp.status_code}): {resp.text}"
+            print(err_msg, file=sys.stderr)
+            logger.error(err_msg)
             break
 
         data = resp.json()
         candidates = data.get("candidates", [])
         if not candidates:
+            err_msg = f"[AI Agent Error] Gemini API returned no candidates: {data}"
+            print(err_msg, file=sys.stderr)
+            logger.error(err_msg)
             break
 
         content = candidates[0].get("content", {})
@@ -499,10 +516,13 @@ async def _call_gemini(
 
         function_calls = [p["functionCall"] for p in parts if "functionCall" in p]
         if not function_calls:
-            # Model provided natural conversational synthesis
+            # Model provided direct text response without tool invocation (e.g. general questions or 2+2)
             text = "".join(p.get("text", "") for p in parts if "text" in p)
             if text:
                 return markdown_to_telegram_html(text)
+            err_msg = f"[AI Agent Error] Gemini candidate had no text and no functionCall: {parts}"
+            print(err_msg, file=sys.stderr)
+            logger.error(err_msg)
             break
 
         # Append model turn with tool call parts
@@ -528,21 +548,21 @@ async def _call_gemini(
     # If the LLM loop terminated without producing conversational text, summarize gracefully
     if last_tool_result:
         return format_tool_result_summary(last_tool_name, last_tool_result)
-    return await _fallback_response(prompt, db_path=db_path)
+    return None
 
 
-async def _call_openai(
+async def _call_openai_compatible(
     prompt: str,
     history: list[dict[str, str]],
     api_key: str,
     client: httpx.AsyncClient,
+    base_url: str,
+    model: str,
+    provider_name: str = "OpenAI",
     db_path: Optional[Path] = None,
-) -> str:
-    """Call OpenAI-compatible REST API with multi-turn tool calling and conversational synthesis."""
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    url = f"{base_url}/chat/completions"
-
+) -> Optional[str]:
+    """Call OpenAI-compatible REST API (OpenAI, Groq, etc.) with multi-turn tool calling."""
+    url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -564,10 +584,19 @@ async def _call_openai(
     last_tool_result: dict[str, Any] = {}
 
     for _ in range(5):
-        resp = await client.post(url, json=payload, headers=headers, timeout=30.0)
+        try:
+            resp = await client.post(url, json=payload, headers=headers, timeout=30.0)
+        except Exception as exc:
+            err_msg = f"[AI Agent Error] {provider_name} request failed (connection/timeout): {exc}"
+            print(err_msg, file=sys.stderr)
+            logger.error(err_msg)
+            return None
+
         if resp.status_code != 200:
-            logger.warning("OpenAI API error %d: %s", resp.status_code, resp.text)
-            break
+            err_msg = f"[AI Agent Error] {provider_name} API error (HTTP {resp.status_code}): {resp.text}"
+            print(err_msg, file=sys.stderr)
+            logger.error(err_msg)
+            return None
 
         data = resp.json()
         choice = data.get("choices", [{}])[0]
@@ -578,7 +607,10 @@ async def _call_openai(
             text = msg.get("content", "")
             if text:
                 return markdown_to_telegram_html(text)
-            break
+            err_msg = f"[AI Agent Error] {provider_name} response had no content and no tool_calls: {msg}"
+            print(err_msg, file=sys.stderr)
+            logger.error(err_msg)
+            return None
 
         # Append assistant tool calls turn
         messages.append(msg)
@@ -603,7 +635,51 @@ async def _call_openai(
 
     if last_tool_result:
         return format_tool_result_summary(last_tool_name, last_tool_result)
-    return await _fallback_response(prompt, db_path=db_path)
+    return None
+
+
+async def _call_groq(
+    prompt: str,
+    history: list[dict[str, str]],
+    api_key: str,
+    client: httpx.AsyncClient,
+    db_path: Optional[Path] = None,
+) -> Optional[str]:
+    """Call Groq REST API using high-performance open models (e.g. openai/gpt-oss-120b)."""
+    base_url = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+    return await _call_openai_compatible(
+        prompt=prompt,
+        history=history,
+        api_key=api_key,
+        client=client,
+        base_url=base_url,
+        model=model,
+        provider_name="Groq",
+        db_path=db_path,
+    )
+
+
+async def _call_openai(
+    prompt: str,
+    history: list[dict[str, str]],
+    api_key: str,
+    client: httpx.AsyncClient,
+    db_path: Optional[Path] = None,
+) -> Optional[str]:
+    """Call OpenAI REST API with multi-turn tool calling."""
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    return await _call_openai_compatible(
+        prompt=prompt,
+        history=history,
+        api_key=api_key,
+        client=client,
+        base_url=base_url,
+        model=model,
+        provider_name="OpenAI",
+        db_path=db_path,
+    )
 
 
 # Public Interface
@@ -615,11 +691,34 @@ async def ask_ai_agent(
     db_path: Optional[Path] = None,
     client: Optional[httpx.AsyncClient] = None,
 ) -> str:
-    """Ask the conversational AI agent a question, returning formatted HTML reply."""
+    """Ask the conversational AI agent a question, returning formatted HTML reply.
+
+    Uses smart provider shifting:
+    1. Primary: Gemini (if GEMINI_API_KEY is configured).
+    2. Secondary: Groq (if GROQ_API_KEY is configured and Gemini fails or is unconfigured).
+    3. Tertiary: OpenAI (if OPENAI_API_KEY is configured).
+    4. Local Fallback: Rule-based deterministic NLP engine.
+    """
     history = _chat_manager.get_history(chat_id)
 
     gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    groq_key = os.getenv("GROQ_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
+
+    detected = []
+    if gemini_key:
+        detected.append("Gemini")
+    if groq_key:
+        detected.append("Groq")
+    if openai_key:
+        detected.append("OpenAI")
+
+    if detected:
+        print(f"[AI Agent] Available LLM providers: {', '.join(detected)} for prompt: '{prompt}'")
+        logger.info("Available LLM providers: %s", ", ".join(detected))
+    else:
+        print(f"[AI Agent] Neither GEMINI_API_KEY nor GROQ_API_KEY nor OPENAI_API_KEY detected (using rule-based fallback) for prompt: '{prompt}'")
+        logger.info("No LLM keys detected; using rule-based fallback")
 
     own_client = False
     if client is None:
@@ -627,11 +726,34 @@ async def ask_ai_agent(
         own_client = True
 
     try:
+        response: Optional[str] = None
+
+        # 1. Primary: Gemini
         if gemini_key:
+            print(f"[AI Agent] Attempting primary provider: Gemini...")
             response = await _call_gemini(prompt, history, gemini_key, client, db_path=db_path)
-        elif openai_key:
+
+        # 2. Smart shift to Groq if Gemini failed or was unconfigured
+        if not response and groq_key:
+            if gemini_key:
+                print(f"[AI Agent] [Shift] Smart shifting to Groq (Gemini unavailable or failed)...")
+                logger.info("Smart shifting to Groq")
+            else:
+                print(f"[AI Agent] Attempting provider: Groq...")
+                logger.info("Attempting provider: Groq")
+            response = await _call_groq(prompt, history, groq_key, client, db_path=db_path)
+
+        # 3. Tertiary: OpenAI
+        if not response and openai_key:
+            print(f"[AI Agent] [Shift] Shifting to OpenAI provider...")
+            logger.info("Shifting to OpenAI provider")
             response = await _call_openai(prompt, history, openai_key, client, db_path=db_path)
-        else:
+
+        # 4. Final: Deterministic NLP fallback
+        if not response:
+            if detected:
+                print(f"[AI Agent] [Notice] All configured LLMs failed; falling back to rule-based NLP engine")
+                logger.warning("All LLMs failed; falling back to rule-based engine")
             response = await _fallback_response(prompt, db_path=db_path)
 
         # Update memory on success
@@ -640,7 +762,9 @@ async def ask_ai_agent(
         return response
 
     except Exception as exc:
-        logger.error("Error generating AI agent response: %s", exc)
+        err_msg = f"[AI Agent Error] Exception during ask_ai_agent: {exc}"
+        print(err_msg, file=sys.stderr)
+        logger.error(err_msg)
         return await _fallback_response(prompt, db_path=db_path)
 
     finally:

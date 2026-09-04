@@ -414,3 +414,158 @@ async def test_ask_ai_agent_openai_tool_calling(
         assert call_count == 2
         assert "<b>Databricks</b>" in reply
         assert "href=\"https://job-boards.greenhouse.io/databricks/jobs/102\"" in reply
+
+
+# 8. Non-Tool Queries & Error Logging Tests
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_gemini_direct_text(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Verify basic non-tool queries (like general conversation or 2+2) return direct model text."""
+    monkeypatch.setenv("GEMINI_API_KEY", "fake_gemini_key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def gemini_mock(request: httpx.Request) -> httpx.Response:
+        assert "gemini-1.5-flash" in str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {"text": "2 + 2 is **4**."}
+                            ]
+                        }
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(gemini_mock)) as client:
+        reply = await ask_ai_agent("what is 2+2", chat_id="chat-math", client=client)
+        assert "<b>4</b>" in reply
+
+    captured = capsys.readouterr()
+    assert "Available LLM providers: Gemini" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_gemini_api_error_logging(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Verify API error (e.g. 404/429) is logged to stderr with exact message before fallback."""
+    monkeypatch.setenv("GEMINI_API_KEY", "fake_gemini_key")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def gemini_mock(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            404,
+            text='{"error": {"code": 404, "message": "models/gemini-1.5-flash is not found"}}',
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(gemini_mock)) as client:
+        reply = await ask_ai_agent("what is 2+2", chat_id="chat-err", client=client)
+        assert "I couldn't find an exact match" in reply
+
+    captured = capsys.readouterr()
+    assert "Available LLM providers: Gemini" in captured.out
+    assert "[AI Agent Error] Gemini API error (HTTP 404)" in captured.err
+    assert "models/gemini-1.5-flash is not found" in captured.err
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_no_key_logging(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Verify ask_ai_agent logs when no keys are detected."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    reply = await ask_ai_agent("hello", chat_id="chat-nokey")
+    assert "Hello! I'm your GCC Job Radar Assistant" in reply
+    captured = capsys.readouterr()
+    assert "Neither GEMINI_API_KEY nor GROQ_API_KEY nor OPENAI_API_KEY detected" in captured.out
+
+
+# 9. Smart Shifting Tests (Gemini -> Groq)
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_smart_shift_gemini_to_groq(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Verify that when Gemini fails (e.g. HTTP 429 quota error), the agent automatically shifts to Groq."""
+    monkeypatch.setenv("GEMINI_API_KEY", "fake_gemini_key")
+    monkeypatch.setenv("GROQ_API_KEY", "fake_groq_key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def multi_provider_mock(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "generativelanguage.googleapis.com" in url_str:
+            # Gemini fails with 429 rate limit error
+            return httpx.Response(
+                429,
+                text='{"error": {"code": 429, "message": "Quota exceeded for Gemini"}}',
+            )
+        elif "api.groq.com" in url_str:
+            # Groq catches request and responds successfully
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "Hello from **Groq** via smart shifting!",
+                            }
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(multi_provider_mock)) as client:
+        reply = await ask_ai_agent("what is 2+2", chat_id="chat-shift", client=client)
+        assert "<b>Groq</b>" in reply
+
+    captured = capsys.readouterr()
+    assert "Gemini, Groq" in captured.out
+    assert "Attempting primary provider: Gemini" in captured.out
+    assert "Smart shifting to Groq" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_groq_standalone(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify Groq works directly when Gemini key is absent."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "fake_groq_key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def groq_mock(request: httpx.Request) -> httpx.Response:
+        assert "api.groq.com" in str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Answer is **4**",
+                        }
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(groq_mock)) as client:
+        reply = await ask_ai_agent("what is 2+2", chat_id="chat-groq-only", client=client)
+        assert "<b>4</b>" in reply

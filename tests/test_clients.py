@@ -38,6 +38,14 @@ async def test_greenhouse_client_success() -> None:
                 "absolute_url": "https://boards.greenhouse.io/databricks/jobs/1003",
                 "updated_at": "2026-08-30T10:00:00Z",
             },
+            {
+                "id": 1004,
+                "title": "Software Engineer 1",
+                "location": {"name": "Bengaluru, India"},
+                "content": "<p>Requirements: 4+ years of experience in Java</p>",  # Filtered out by experience
+                "absolute_url": "https://boards.greenhouse.io/databricks/jobs/1004",
+                "updated_at": "2026-08-30T10:00:00Z",
+            },
         ]
     }
 
@@ -95,6 +103,14 @@ async def test_lever_client_success() -> None:
             "hostedUrl": "https://jobs.lever.co/atlassian/lever-2003",
             "createdAt": 1756000000000,
         },
+        {
+            "id": "lever-2004",
+            "text": "Associate Software Engineer",
+            "categories": {"location": "Pune, India"},
+            "descriptionPlain": "Candidate must possess 4+ years of experience in Java.",  # Disqualified
+            "hostedUrl": "https://jobs.lever.co/atlassian/lever-2004",
+            "createdAt": 1756000000000,
+        },
     ]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -144,6 +160,14 @@ async def test_ashby_client_success() -> None:
                 "title": "Staff Engineer",  # Disqualified
                 "location": "Bengaluru, India",
                 "jobUrl": "https://jobs.ashbyhq.com/linear/ashby-3002",
+                "publishedAt": "2026-08-25T14:30:00Z",
+            },
+            {
+                "id": "ashby-3004",
+                "title": "Junior Software Engineer",
+                "location": "Bengaluru, India",
+                "descriptionPlain": "Requires minimum 3+ years of experience in distributed systems.",  # Disqualified
+                "jobUrl": "https://jobs.ashbyhq.com/linear/ashby-3004",
                 "publishedAt": "2026-08-25T14:30:00Z",
             },
         ]

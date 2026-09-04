@@ -7,7 +7,11 @@ import httpx
 from pydantic import ValidationError
 
 from gcc_job_radar.clients.base import BaseATSClient
-from gcc_job_radar.filters import matches_india_location, matches_target_title
+from gcc_job_radar.filters import (
+    matches_india_location,
+    matches_target_title,
+    requires_experienced_candidate,
+)
 from gcc_job_radar.models import ATSProvider, CompanyConfig, JobPosting
 
 logger = logging.getLogger(__name__)
@@ -48,6 +52,17 @@ class LeverClient(BaseATSClient):
                     continue
 
                 if not (matches_india_location(location) or matches_india_location(full_location_str)):
+                    continue
+
+                # Disqualify roles requiring 3+ years experience
+                content = job.get("descriptionPlain") or ""
+                if not content and "lists" in job:
+                    content = " ".join(
+                        f"{item.get('text', '')} {item.get('content', '')}"
+                        for item in job.get("lists", [])
+                        if isinstance(item, dict)
+                    )
+                if requires_experienced_candidate(content):
                     continue
 
                 apply_url = job.get("hostedUrl") or job.get("applyUrl")

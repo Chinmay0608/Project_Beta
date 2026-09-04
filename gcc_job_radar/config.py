@@ -254,7 +254,10 @@ EXCLUDE_TITLE_PATTERN: re.Pattern[str] = re.compile(
         # Non-engineering / non-tech professions
         sales|marketing|hr|recruiter|recruiting|talent|account\s+executive|
         customer\s+support|customer\s+success|customer\s+experience|support\s+specialist|
-        operations|finance|legal|compliance|business\s+development|bdr|sdr
+        operations|finance|legal|compliance|business\s+development|bdr|sdr|
+        # Pre-sales / Solutions Engineering / Excellence Centers / Support
+        solutions?\s+engineer(?:ing)?|sales\s+engineer(?:ing)?|pre[- ]?sales|post[- ]?sales|
+        excellence\s+center|center\s+of\s+excellence|se\s+excellence|support\s+engineer(?:ing)?
     )\b
     """,
     re.VERBOSE | re.IGNORECASE,

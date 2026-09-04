@@ -5,8 +5,12 @@ import csv
 import json
 from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv
 import typer
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
+# Automatically load environment variables from .env if present
+load_dotenv()
 
 from gcc_job_radar import __version__
 from gcc_job_radar.config import COMPANIES

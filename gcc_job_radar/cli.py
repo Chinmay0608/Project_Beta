@@ -170,6 +170,7 @@ def scan(
                 discord_webhook=notify_discord,
                 telegram_token=notify_telegram_token,
                 telegram_chat_id=notify_telegram_chat,
+                db_path=db_path,
             )
         )
 

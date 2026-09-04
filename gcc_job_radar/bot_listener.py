@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from gcc_job_radar import __version__
+from gcc_job_radar.ai_agent import ask_ai_agent, clear_chat_history
 from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.db import filter_new_jobs, get_latest_jobs, get_stats, record_jobs
 from gcc_job_radar.engine import scan_all_companies
@@ -18,6 +19,24 @@ from gcc_job_radar.models import CompanyConfig, JobPosting
 
 logger = logging.getLogger(__name__)
 console = Console(highlight=False)
+
+# Debounce & lock flags to prevent duplicate simultaneous or re-delivered /scan executions
+_is_scanning: bool = False
+_last_scan_timestamp: float = 0.0
+
+
+async def send_telegram_chat_action(
+    bot_token: str, chat_id: str | int, client: httpx.AsyncClient, action: str = "typing"
+) -> bool:
+    """Send a chat action (e.g. typing) to Telegram."""
+    url = f"https://api.telegram.org/bot{bot_token}/sendChatAction"
+    payload = {"chat_id": chat_id, "action": action}
+    try:
+        resp = await client.post(url, json=payload)
+        return resp.status_code == 200
+    except Exception as exc:
+        logger.debug("Error sending chat action: %s", exc)
+        return False
 
 
 async def send_telegram_reply(
@@ -37,6 +56,7 @@ async def send_telegram_reply(
     except Exception as exc:
         logger.warning("Error sending Telegram reply: %s", exc)
         return False
+
 
 
 def format_jobs_html(jobs: list[JobPosting | dict[str, Any]], title: str) -> str:
@@ -94,17 +114,19 @@ async def handle_command(
     cmd = parts[0].lower()
     arg = parts[1].strip() if len(parts) > 1 else ""
 
-    if cmd in ("/start", "/help"):
+    if cmd in ("/start", "/help", "/list"):
         help_text = (
-            f"⚡ <b>GCC Job Radar Bot (v{__version__})</b>\n\n"
-            "Here are the available commands:\n"
-            "• <code>/scan</code> - Run live scan across all 70+ configured GCCs & tech centers\n"
-            "• <code>/check &lt;company&gt;</code> - Scan a specific company (e.g. <code>/check celonis</code>)\n"
-            "• <code>/stats</code> - View historical database tracking statistics\n"
-            "• <code>/latest</code> - View the 5 most recently recorded postings\n"
-            "• <code>/help</code> - Show this menu"
+            "📋 <b>GCC Radar Commands:</b>\n"
+            "• <code>/scan</code> — Scan all 150+ GCCs\n"
+            "• <code>/check &lt;name&gt;</code> — Check single company\n"
+            "• <code>/latest</code> — Show 5 recent openings\n"
+            "• <code>/stats</code> — View database stats\n"
+            "• <code>/clear</code> — Clear AI conversation memory\n"
+            "• <code>/list</code> — Show this menu\n\n"
+            "💬 <i>Or ask any question in plain text to chat with the AI assistant!</i>"
         )
         await send_telegram_reply(bot_token, chat_id, help_text, client)
+
 
     elif cmd == "/stats":
         stats = get_stats(db_path)
@@ -168,24 +190,61 @@ async def handle_command(
         await send_telegram_reply(bot_token, chat_id, reply, client)
 
     elif cmd == "/scan":
+        global _is_scanning, _last_scan_timestamp
+        import time
+
+        now = time.time()
+        if _is_scanning:
+            await send_telegram_reply(
+                bot_token,
+                chat_id,
+                "⏳ <i>A scan is currently already running. Please wait for it to complete.</i>",
+                client,
+            )
+            return
+
+        # Debounce: if a scan finished less than 10 seconds ago (e.g. duplicate webhook/update)
+        if now - _last_scan_timestamp < 10:
+            await send_telegram_reply(
+                bot_token,
+                chat_id,
+                "⚡ <i>A scan was just completed seconds ago. Use <code>/latest</code> to see current findings or try again in a few moments.</i>",
+                client,
+            )
+            return
+
+        _is_scanning = True
+        try:
+            await send_telegram_reply(
+                bot_token,
+                chat_id,
+                f"⚡ Initiating scan across all <b>{len(COMPANIES)}</b> foreign GCCs & tech centers in India...",
+                client,
+            )
+            jobs = await scan_all_companies(companies=COMPANIES)
+            new_jobs, _ = filter_new_jobs(jobs, db_path)
+            record_jobs(jobs, db_path)
+
+            if jobs:
+                reply = format_jobs_html(jobs, "Verified Active Entry-Level Openings")
+            else:
+                reply = (
+                    "ℹ️ <b>Scan Complete</b>\n\n"
+                    "No entry-level tech roles currently open matching strict criteria across all 150+ tracked boards."
+                )
+            await send_telegram_reply(bot_token, chat_id, reply, client)
+        finally:
+            _is_scanning = False
+            _last_scan_timestamp = time.time()
+
+    elif cmd in ("/clear", "/reset"):
+        clear_chat_history(chat_id)
         await send_telegram_reply(
             bot_token,
             chat_id,
-            f"⚡ Initiating scan across all <b>{len(COMPANIES)}</b> foreign GCCs & tech centers in India...",
+            "🧹 <b>Chat history cleared.</b> How can I help you find GCC roles?",
             client,
         )
-        jobs = await scan_all_companies(companies=COMPANIES)
-        new_jobs, _ = filter_new_jobs(jobs, db_path)
-        record_jobs(jobs, db_path)
-
-        if jobs:
-            reply = format_jobs_html(jobs, "Verified Active Entry-Level Openings")
-        else:
-            reply = (
-                "ℹ️ <b>Scan Complete</b>\n\n"
-                "No entry-level tech roles currently open matching strict criteria across all 70+ tracked boards."
-            )
-        await send_telegram_reply(bot_token, chat_id, reply, client)
 
     else:
         await send_telegram_reply(
@@ -194,6 +253,7 @@ async def handle_command(
             "❓ Unknown command. Send <code>/help</code> to see available commands.",
             client,
         )
+
 
 
 async def run_bot_listener(
@@ -254,9 +314,30 @@ async def run_bot_listener(
                             client=client,
                             db_path=db_path,
                         )
+                    elif text.strip():
+                        if str(chat_id).strip() != str(allowed_chat_id).strip():
+                            logger.warning("Unauthorized access attempt from chat_id: %s", chat_id)
+                            await send_telegram_reply(
+                                bot_token,
+                                chat_id,
+                                "⛔ <b>Access Denied</b>: Your Telegram account is not authorized to control this GCC Job Radar bot.",
+                                client,
+                            )
+                            continue
+
+                        console.print(f"[green]AI Query:[/green] [bold]{text.strip()}[/bold] from chat_id [yellow]{chat_id}[/yellow]")
+                        await send_telegram_chat_action(bot_token, chat_id, client, "typing")
+                        ai_reply = await ask_ai_agent(text.strip(), chat_id=chat_id, db_path=db_path, client=client)
+                        await send_telegram_reply(bot_token, chat_id, ai_reply, client)
 
             except asyncio.CancelledError:
                 break
+            except httpx.ConnectTimeout:
+                logger.error(
+                    "Connection timeout connecting to api.telegram.org. If your local ISP blocks Telegram API, enable WARP/VPN or configure a proxy."
+                )
+                await asyncio.sleep(5)
             except Exception as exc:
                 logger.error("Error in bot polling loop: %s", exc)
                 await asyncio.sleep(2)
+

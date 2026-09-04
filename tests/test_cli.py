@@ -69,13 +69,17 @@ def test_cli_new_only_flag(tmp_path: Path) -> None:
         return [sample_job]
 
     # Run 1: Should detect 1 new job
-    with patch("gcc_job_radar.cli.scan_all_companies", side_effect=mock_scan):
+    with patch("gcc_job_radar.cli.scan_all_companies", side_effect=mock_scan), patch(
+        "gcc_job_radar.cli.dispatch_notifications"
+    ):
         res1 = runner.invoke(app, ["--new-only", "--db", str(db_file)])
         assert res1.exit_code == 0
         assert "Found 1 new entry-level opening" in res1.output
 
     # Run 2: Same job should now be detected as 0 new jobs
-    with patch("gcc_job_radar.cli.scan_all_companies", side_effect=mock_scan):
+    with patch("gcc_job_radar.cli.scan_all_companies", side_effect=mock_scan), patch(
+        "gcc_job_radar.cli.dispatch_notifications"
+    ):
         res2 = runner.invoke(app, ["--new-only", "--db", str(db_file)])
         assert res2.exit_code == 0
         assert "No newly discovered entry-level roles since your last scan" in res2.output
@@ -136,7 +140,9 @@ def test_cli_json_and_csv_export(tmp_path: Path) -> None:
     async def mock_scan(*args, **kwargs):
         return [sample_job]
 
-    with patch("gcc_job_radar.cli.scan_all_companies", side_effect=mock_scan):
+    with patch("gcc_job_radar.cli.scan_all_companies", side_effect=mock_scan), patch(
+        "gcc_job_radar.cli.dispatch_notifications"
+    ):
         result = runner.invoke(
             app,
             [

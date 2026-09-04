@@ -75,6 +75,9 @@ async def test_help_command() -> None:
         assert "/check" in text
         assert "/stats" in text
         assert "/latest" in text
+        assert "/clear" in text
+        assert "/list" in text
+
 
 
 @pytest.mark.asyncio
@@ -161,8 +164,61 @@ async def test_check_command(sample_jobs: list[JobPosting]) -> None:
                 client=client,
             )
 
-            # Expected 2 messages: Scanning message + Results message
             assert len(captured_messages) == 2
             assert "Scanning" in captured_messages[0]["text"]
             assert "Celonis" in captured_messages[1]["text"]
             assert "Associate Software Engineer" in captured_messages[1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_scan_debounce(sample_jobs: list[JobPosting]) -> None:
+    """Verify /scan debounces immediate re-executions to avoid duplicate scans."""
+    captured_messages = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        data = json.loads(request.content.decode("utf-8"))
+        captured_messages.append(data)
+        return httpx.Response(200, json={"ok": True})
+
+    async def mock_scan(*args, **kwargs):
+        return sample_jobs
+
+    import gcc_job_radar.bot_listener as bl
+    bl._last_scan_timestamp = 0.0
+    bl._is_scanning = False
+
+    with patch("gcc_job_radar.bot_listener.scan_all_companies", side_effect=mock_scan):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            # First scan should succeed
+            await handle_command("/scan", "123456", "token", "123456", client)
+            # Second scan immediately after should trigger debounce
+            await handle_command("/scan", "123456", "token", "123456", client)
+
+            # Check that debounce message was sent
+            assert any("just completed seconds ago" in msg["text"] for msg in captured_messages)
+
+
+@pytest.mark.asyncio
+async def test_clear_command() -> None:
+    """Verify /clear resets chat history and replies."""
+    captured_messages = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        data = json.loads(request.content.decode("utf-8"))
+        captured_messages.append(data)
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await handle_command(
+            command_text="/clear",
+            chat_id="123456",
+            bot_token="test_token",
+            allowed_chat_id="123456",
+            client=client,
+        )
+
+        assert len(captured_messages) == 1
+        text = captured_messages[0]["text"]
+        assert "Chat history cleared" in text
+
+

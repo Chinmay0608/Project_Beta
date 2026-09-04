@@ -1,5 +1,4 @@
-"""Unit tests for Discord and Telegram notification dispatchers."""
-
+from pathlib import Path
 import httpx
 import pytest
 
@@ -110,7 +109,7 @@ async def test_send_telegram_notification_failure(sample_jobs: list[JobPosting])
 
 @pytest.mark.asyncio
 async def test_dispatch_notifications_with_env(
-    sample_jobs: list[JobPosting], monkeypatch: pytest.MonkeyPatch
+    sample_jobs: list[JobPosting], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Verify dispatch_notifications falls back to environment variables when flags omitted."""
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/mocked")
@@ -136,6 +135,92 @@ async def test_dispatch_notifications_with_env(
 
     monkeypatch.setattr(httpx, "AsyncClient", mock_client_factory)
 
-    await dispatch_notifications(sample_jobs)
+    test_db = tmp_path / "notifier_env_test.db"
+    await dispatch_notifications(sample_jobs, db_path=test_db)
     assert any("discord.com" in u for u in called_urls)
     assert any("telegram.org" in u for u in called_urls)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_notifications_explicit_args(
+    sample_jobs: list[JobPosting], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verify dispatch_notifications sends alerts when tokens are passed directly as arguments."""
+    called_urls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        called_urls.append(str(request.url))
+        if "discord.com" in str(request.url):
+            return httpx.Response(204)
+        return httpx.Response(200, json={"ok": True})
+
+    original_async_client = httpx.AsyncClient
+
+    def mock_client_factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", mock_client_factory)
+
+    test_db = tmp_path / "notifier_args_test.db"
+    await dispatch_notifications(
+        sample_jobs,
+        discord_webhook="https://discord.com/api/webhooks/mocked_arg",
+        telegram_token="mock_arg_token",
+        telegram_chat_id="mock_arg_chat",
+        db_path=test_db,
+    )
+    assert any("discord.com" in u for u in called_urls)
+    assert any("telegram.org" in u for u in called_urls)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_notifications_deduplication(
+    sample_jobs: list[JobPosting], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verify dispatch_notifications does not re-alert on previously dispatched jobs."""
+    called_urls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        called_urls.append(str(request.url))
+        return httpx.Response(200, json={"ok": True})
+
+    original_async_client = httpx.AsyncClient
+
+    def mock_client_factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", mock_client_factory)
+
+    test_db = tmp_path / "notifier_dedup_test.db"
+
+    # First dispatch: sends 1 telegram message (since telegram doesn't chunk sample_jobs into multiples)
+    await dispatch_notifications(
+        sample_jobs,
+        telegram_token="mock_token",
+        telegram_chat_id="mock_chat",
+        db_path=test_db,
+    )
+    assert len(called_urls) == 1
+
+    # Second dispatch with identical db: should NOT call telegram API again
+    await dispatch_notifications(
+        sample_jobs,
+        telegram_token="mock_token",
+        telegram_chat_id="mock_chat",
+        db_path=test_db,
+    )
+    assert len(called_urls) == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_notifications_no_channels(
+    sample_jobs: list[JobPosting], tmp_path: Path
+) -> None:
+    """Verify dispatch_notifications cleanly returns without making any HTTP requests when unconfigured."""
+    test_db = tmp_path / "notifier_no_channels.db"
+    # Should complete without error and without making any requests
+    await dispatch_notifications(sample_jobs, db_path=test_db)
+
+

@@ -88,7 +88,7 @@ Start an interactive long-polling Telegram bot that responds to commands directl
 gcc-job-radar bot --token "BOT_TOKEN" --chat-id "CHAT_ID"
 ```
 **Supported Commands**:
-- `/scan`: Triggers live scan across all 70+ configured GCCs and replies with active openings.
+- `/scan`: Triggers live scan across all 150+ configured GCCs and replies with active openings.
 - `/check <company>`: Scans a specific company (e.g. `/check celonis`, `/check databricks`).
 - `/stats`: Shows database tracking metrics and company breakdown.
 - `/latest`: Shows the 5 most recently discovered postings with direct apply URLs.

@@ -136,10 +136,13 @@ async def dispatch_notifications(
     discord_webhook: Optional[str] = None,
     telegram_token: Optional[str] = None,
     telegram_chat_id: Optional[str] = None,
+    db_path: Optional[os.PathLike] = None,
 ) -> None:
-    """Dispatch notifications to configured channels for new postings."""
+    """Dispatch notifications to configured channels for new postings, preventing duplicates."""
     if not new_jobs:
         return
+
+    from gcc_job_radar.db import filter_unalerted_jobs, record_dispatched_alerts
 
     # Fallback to environment variables
     discord_url = discord_webhook or os.getenv("DISCORD_WEBHOOK_URL")
@@ -151,15 +154,23 @@ async def dispatch_notifications(
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         if discord_url:
-            ok = await send_discord_notification(discord_url, new_jobs, client)
-            if ok:
-                console.print(f"[bold green][+][/bold green] Sent Discord alert for {len(new_jobs)} new posting(s).")
-            else:
-                console.print("[bold red][!][/bold red] Failed to send Discord notification.")
+            # Filter out jobs already alerted to Discord
+            discord_jobs = filter_unalerted_jobs(new_jobs, "discord", db_path)
+            if discord_jobs:
+                ok = await send_discord_notification(discord_url, discord_jobs, client)
+                if ok:
+                    record_dispatched_alerts(discord_jobs, "discord", db_path)
+                    console.print(f"[bold green][+][/bold green] Sent Discord alert for {len(discord_jobs)} new posting(s).")
+                else:
+                    console.print("[bold red][!][/bold red] Failed to send Discord notification.")
 
         if tg_token and tg_chat:
-            ok = await send_telegram_notification(tg_token, tg_chat, new_jobs, client)
-            if ok:
-                console.print(f"[bold green][+][/bold green] Sent Telegram alert for {len(new_jobs)} new posting(s).")
-            else:
-                console.print("[bold red][!][/bold red] Failed to send Telegram notification.")
+            # Filter out jobs already alerted to Telegram
+            telegram_jobs = filter_unalerted_jobs(new_jobs, "telegram", db_path)
+            if telegram_jobs:
+                ok = await send_telegram_notification(tg_token, tg_chat, telegram_jobs, client)
+                if ok:
+                    record_dispatched_alerts(telegram_jobs, "telegram", db_path)
+                    console.print(f"[bold green][+][/bold green] Sent Telegram alert for {len(telegram_jobs)} new posting(s).")
+                else:
+                    console.print("[bold red][!][/bold red] Failed to send Telegram notification.")

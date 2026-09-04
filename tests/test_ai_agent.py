@@ -10,6 +10,7 @@ from gcc_job_radar.ai_agent import (
     ChatHistoryManager,
     ask_ai_agent,
     clear_chat_history,
+    convert_markdown_tables_to_cards,
     execute_tool,
     format_jobs_html,
     markdown_to_telegram_html,
@@ -122,6 +123,49 @@ def test_markdown_to_telegram_html() -> None:
     assert "&lt;" in res2
     assert "&amp;" in res2
     assert "<b>valid</b>" in res2
+
+
+def test_markdown_table_to_cards_conversion() -> None:
+    """Verify markdown tables (like those returned by LLMs) convert to mobile-friendly cards."""
+    table_md = (
+        "Here is the latest opening:\n\n"
+        "| Company | Role | Location | Posted |\n"
+        "|---------|------|----------|---------|\n"
+        "| Celonis | Associate Software Engineer – Java | Bangalore, India | 25 Aug 2026 |\n\n"
+        "[Apply here](https://job-boards.greenhouse.io/celonis/jobs/7791267003)"
+    )
+    html_res = markdown_to_telegram_html(table_md)
+    # Ensure raw table pipes were converted away
+    assert "| Company |" not in html_res
+    assert "|---------" not in html_res
+    assert "🏢 <b>Celonis</b>" in html_res
+    assert "💼 Associate Software Engineer" in html_res
+    assert "📍 Bangalore, India • 📅 25 Aug 2026" in html_res
+    assert '<a href="https://job-boards.greenhouse.io/celonis/jobs/7791267003">Apply here</a>' in html_res
+
+
+def test_markdown_table_with_inline_links() -> None:
+    """Verify markdown tables containing apply URLs convert directly to cards with action links."""
+    table_md = (
+        "| Company | Role | Location | Apply |\n"
+        "|---|---|---|---|\n"
+        "| Databricks | Software Engineer 1 | Bangalore | https://databricks.com/jobs/101 |\n"
+    )
+    html_res = markdown_to_telegram_html(table_md)
+    assert "🏢 <b>Databricks</b>" in html_res
+    assert "💼 Software Engineer 1" in html_res
+    assert '<a href="https://databricks.com/jobs/101">Apply on ATS</a>' in html_res
+
+
+def test_markdown_bullets_and_italics_safe() -> None:
+    """Verify asterisk bullets do not accidentally close or mangle subsequent italics."""
+    md = "* **Associate Software Engineer - Java** at **Celonis** (Bangalore, India) — *Published Aug 25, 2026*"
+    html_res = markdown_to_telegram_html(md)
+    assert html_res.startswith("• ")
+    assert "<b>Associate Software Engineer - Java</b>" in html_res
+    assert "<b>Celonis</b>" in html_res
+    assert "<i>Published Aug 25, 2026</i>" in html_res
+    assert "</i>Published" not in html_res
 
 
 def test_format_jobs_html(sample_jobs: list[JobPosting]) -> None:
@@ -428,7 +472,7 @@ async def test_ask_ai_agent_gemini_direct_text(
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     def gemini_mock(request: httpx.Request) -> httpx.Response:
-        assert "gemini-2.5-flash" in str(request.url)
+        assert "gemini-flash-lite-latest" in str(request.url)
         return httpx.Response(
             200,
             json={

@@ -23,9 +23,17 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "You are the GCC Job Radar AI Assistant. You help candidates discover verified "
-    "entry-level engineering, software, and tech roles at foreign GCCs and enterprise centers in India. "
-    "Use your tools to query the local database, inspect the company directory, or run real-time company checks. "
-    "Format responses cleanly with bold titles and markdown links for job applications. Keep answers concise, natural, and conversational."
+    "entry-level engineering, software, and tech roles at foreign GCCs and enterprise tech hubs in India. "
+    "Use your tools to query the local database, inspect the company directory, or run real-time company checks.\n\n"
+    "CRITICAL FORMATTING GUIDELINES FOR TELEGRAM:\n"
+    "- NEVER use markdown tables (no '| ... |' format). Telegram cannot render tables and they look broken and unreadable on mobile screens.\n"
+    "- When presenting jobs, ALWAYS present each job as a clean, structured card with emojis and markdown links:\n"
+    "  🏢 **Company Name**\n"
+    "  💼 Job Title\n"
+    "  📍 Location • 📅 Posted Date\n"
+    "  🔗 [Apply on ATS](apply_url)\n"
+    "- If multiple jobs are found, separate each job card with a blank line.\n"
+    "- Keep answers concise, crisp, and conversational. Avoid walls of text."
 )
 
 # Tool Schemas for Gemini & OpenAI
@@ -242,10 +250,91 @@ async def execute_tool(
 # Telegram HTML Formatting Helper
 
 
+def _clean_cell(val: str) -> str:
+    val = val.strip()
+    if (val.startswith("**") and val.endswith("**")) or (val.startswith("__") and val.endswith("__")):
+        val = val[2:-2].strip()
+    return val
+
+
+def _split_table_row(line: str) -> list[str]:
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [cell.strip() for cell in stripped.split("|")]
+
+
+def _is_table_separator(line: str) -> bool:
+    stripped = line.strip()
+    return bool(re.match(r"^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?$", stripped))
+
+
+def convert_markdown_tables_to_cards(text: str) -> str:
+    """Convert raw markdown tables into mobile-friendly structured cards."""
+    lines = text.split("\n")
+    new_lines = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if "|" in line and i + 1 < len(lines) and _is_table_separator(lines[i + 1]):
+            headers = [_clean_cell(c) for c in _split_table_row(line)]
+            i += 2  # skip header and separator line
+            table_cards = []
+            while i < len(lines) and "|" in lines[i] and not _is_table_separator(lines[i]):
+                row_cells = _split_table_row(lines[i])
+                row_dict = {h.lower(): cell for h, cell in zip(headers, row_cells)}
+
+                comp = next((_clean_cell(v) for k, v in row_dict.items() if any(w in k for w in ["company", "employer", "org", "firm"]) and v), None)
+                role = next((_clean_cell(v) for k, v in row_dict.items() if any(w in k for w in ["role", "title", "position", "job", "designation"]) and v), None)
+                loc = next((_clean_cell(v) for k, v in row_dict.items() if any(w in k for w in ["location", "city", "place", "office"]) and v), None)
+                date = next((_clean_cell(v) for k, v in row_dict.items() if any(w in k for w in ["posted", "date", "published", "added"]) and v), None)
+                link = next((v for k, v in row_dict.items() if any(w in k for w in ["link", "apply", "url", "action"]) and v), None)
+
+                if comp or role:
+                    card = []
+                    if comp:
+                        card.append(f"🏢 **{comp}**")
+                    if role:
+                        card.append(f"💼 {role}")
+                    meta = []
+                    if loc:
+                        meta.append(f"📍 {loc}")
+                    if date:
+                        meta.append(f"📅 {date}")
+                    if meta:
+                        card.append(" • ".join(meta))
+                    if link:
+                        if link.startswith("[") and "](" in link:
+                            card.append(f"🔗 {link}")
+                        elif link.startswith("http://") or link.startswith("https://"):
+                            card.append(f"🔗 [Apply on ATS]({link})")
+                        else:
+                            card.append(f"🔗 {link}")
+                    table_cards.append("\n".join(card))
+                else:
+                    items = [f"• **{h.title()}**: {v}" for h, v in zip(headers, row_cells) if v]
+                    table_cards.append("\n".join(items))
+                i += 1
+            if table_cards:
+                new_lines.append("\n\n".join(table_cards))
+            continue
+        new_lines.append(line)
+        i += 1
+    return "\n".join(new_lines)
+
+
 def markdown_to_telegram_html(text: str) -> str:
     """Convert common markdown patterns to safe Telegram HTML."""
     if not text:
         return ""
+
+    # 1. Convert any raw markdown tables to clean card layout
+    text = convert_markdown_tables_to_cards(text)
+
+    # 2. Convert markdown bullet points (* or - at start of line) to •
+    text = re.sub(r"(?m)^[\*\-]\s+", "• ", text)
 
     # Replace markdown code blocks ```code``` -> <pre>code</pre>
     def replace_code_block(match: re.Match) -> str:
@@ -267,10 +356,12 @@ def markdown_to_telegram_html(text: str) -> str:
             part = re.sub(r"\[([^\]]+)\]\((https?://[^\)]+)\)", r'<a href="\2">\1</a>', part)
             # Bold **text** or __text__ -> <b>text</b>
             part = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", part)
+            part = re.sub(r"__([^_]+)__", r"<b>\1</b>", part)
             # Inline code `code` -> <code>code</code>
             part = re.sub(r"`([^`]+)`", r"<code>\1</code>", part)
-            # Italics *text* -> <i>text</i>
-            part = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<i>\1</i>", part)
+            # Italics *text* or _text_ -> <i>text</i> (excluding word boundaries or whitespace)
+            part = re.sub(r"(?<![\*\w])\*([^\*\s](?:[^\*]*?[^\*\s])?)\*(?![\*\w])", r"<i>\1</i>", part)
+            part = re.sub(r"(?<![_\w])_([^_\s](?:[^_]*?[^_\s])?)_(?![_\w])", r"<i>\1</i>", part)
             escaped_parts.append(part)
 
     return "".join(escaped_parts).strip()
@@ -469,7 +560,7 @@ async def _call_gemini(
     db_path: Optional[Path] = None,
 ) -> str:
     """Call Google Gemini REST API with multi-turn tool calling and conversational synthesis."""
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    model = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
     # Build multi-turn contents

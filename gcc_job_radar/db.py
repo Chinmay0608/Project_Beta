@@ -153,3 +153,24 @@ def get_stats(db_path: Optional[Path] = None) -> dict[str, Any]:
         "last_active": last_active,
         "db_path": str(target_path.resolve()),
     }
+
+
+def get_latest_jobs(limit: int = 5, db_path: Optional[Path] = None) -> list[dict[str, Any]]:
+    """Retrieve the most recently recorded or active jobs from the database."""
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+
+    with sqlite3.connect(target_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, company, title, location, apply_url, provider, published_date, first_seen_at, last_seen_at
+            FROM seen_jobs
+            ORDER BY last_seen_at DESC, first_seen_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]

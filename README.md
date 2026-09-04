@@ -82,6 +82,20 @@ export TELEGRAM_CHAT_ID="CHAT_ID"
 gcc-job-radar --new-only
 ```
 
+### 7. Interactive Telegram Bot (Remote Control)
+Start an interactive long-polling Telegram bot that responds to commands directly on your phone:
+```bash
+gcc-job-radar bot --token "BOT_TOKEN" --chat-id "CHAT_ID"
+```
+**Supported Commands**:
+- `/scan`: Triggers live scan across all 70+ configured GCCs and replies with active openings.
+- `/check <company>`: Scans a specific company (e.g. `/check celonis`, `/check databricks`).
+- `/stats`: Shows database tracking metrics and company breakdown.
+- `/latest`: Shows the 5 most recently discovered postings with direct apply URLs.
+- `/help`: Lists available commands.
+
+*Security Note: The bot strictly authenticates incoming messages against `--chat-id` (or `TELEGRAM_CHAT_ID`) and rejects unauthorized users.*
+
 ---
 
 ## Automating with GitHub Actions (Zero-Server Setup)

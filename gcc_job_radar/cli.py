@@ -189,6 +189,47 @@ def scan(
         export_csv(jobs_to_export, csv_path)
 
 
+@app.command("bot")
+def bot_command(
+    token: Optional[str] = typer.Option(
+        None,
+        "--token",
+        "-t",
+        help="Telegram bot token (or set TELEGRAM_BOT_TOKEN env var).",
+    ),
+    chat_id: Optional[str] = typer.Option(
+        None,
+        "--chat-id",
+        "-c",
+        help="Authorized Telegram chat ID (or set TELEGRAM_CHAT_ID env var).",
+    ),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+) -> None:
+    """Start interactive Telegram bot listener for scans and job alerts."""
+    import os
+    from gcc_job_radar.bot_listener import run_bot_listener
+
+    bot_token = token or os.getenv("TELEGRAM_BOT_TOKEN")
+    allowed_chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+
+    if not bot_token:
+        console.print("[bold red]Error:[/bold red] Missing Telegram bot token. Pass `--token` or set `TELEGRAM_BOT_TOKEN`.")
+        raise typer.Exit(code=1)
+
+    if not allowed_chat_id:
+        console.print("[bold red]Error:[/bold red] Missing authorized Telegram chat ID. Pass `--chat-id` or set `TELEGRAM_CHAT_ID`.")
+        raise typer.Exit(code=1)
+
+    try:
+        asyncio.run(run_bot_listener(bot_token=bot_token, allowed_chat_id=str(allowed_chat_id), db_path=db_path))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Telegram bot listener stopped.[/yellow]")
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,

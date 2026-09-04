@@ -472,7 +472,7 @@ async def test_ask_ai_agent_gemini_direct_text(
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     def gemini_mock(request: httpx.Request) -> httpx.Response:
-        assert "gemini-flash-lite-latest" in str(request.url)
+        assert "gemini-3.1-flash-lite" in str(request.url)
         return httpx.Response(
             200,
             json={
@@ -613,3 +613,37 @@ async def test_ask_ai_agent_groq_standalone(
     async with httpx.AsyncClient(transport=httpx.MockTransport(groq_mock)) as client:
         reply = await ask_ai_agent("what is 2+2", chat_id="chat-groq-only", client=client)
         assert "<b>4</b>" in reply
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_primary_groq_preference(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Verify that when PRIMARY_LLM_PROVIDER=groq, Groq is called first."""
+    monkeypatch.setenv("PRIMARY_LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake_gemini_key")
+    monkeypatch.setenv("GROQ_API_KEY", "fake_groq_key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def groq_first_mock(request: httpx.Request) -> httpx.Response:
+        assert "api.groq.com" in str(request.url)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "Lightning-fast answer from **Groq**!",
+                        }
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(groq_first_mock)) as client:
+        reply = await ask_ai_agent("any new opening", chat_id="chat-groq-primary", client=client)
+        assert "<b>Groq</b>" in reply
+
+    captured = capsys.readouterr()
+    assert "Attempting primary provider: Groq" in captured.out

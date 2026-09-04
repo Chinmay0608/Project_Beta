@@ -560,7 +560,7 @@ async def _call_gemini(
     db_path: Optional[Path] = None,
 ) -> str:
     """Call Google Gemini REST API with multi-turn tool calling and conversational synthesis."""
-    model = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")
+    model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
     # Build multi-turn contents
@@ -581,7 +581,7 @@ async def _call_gemini(
 
     for _ in range(5):
         try:
-            resp = await client.post(url, json=payload, timeout=45.0)
+            resp = await client.post(url, json=payload, timeout=15.0)
         except Exception as exc:
             err_msg = f"[AI Agent Error] Gemini request failed (connection/timeout): {exc}"
             print(err_msg, file=sys.stderr)
@@ -819,26 +819,46 @@ async def ask_ai_agent(
     try:
         response: Optional[str] = None
 
-        # 1. Primary: Gemini
-        if gemini_key:
-            print(f"[AI Agent] Attempting primary provider: Gemini...")
-            response = await _call_gemini(prompt, history, gemini_key, client, db_path=db_path)
+        primary_pref = os.getenv("PRIMARY_LLM_PROVIDER", "gemini").strip().lower()
 
-        # 2. Smart shift to Groq if Gemini failed or was unconfigured
-        if not response and groq_key:
-            if gemini_key:
-                print(f"[AI Agent] [Shift] Smart shifting to Groq (Gemini unavailable or failed)...")
-                logger.info("Smart shifting to Groq")
-            else:
-                print(f"[AI Agent] Attempting provider: Groq...")
-                logger.info("Attempting provider: Groq")
+        if primary_pref == "groq" and groq_key:
+            # 1. Primary: Groq (ultra-fast ~2s LPU inference)
+            print(f"[AI Agent] Attempting primary provider: Groq...")
             response = await _call_groq(prompt, history, groq_key, client, db_path=db_path)
 
-        # 3. Tertiary: OpenAI
-        if not response and openai_key:
-            print(f"[AI Agent] [Shift] Shifting to OpenAI provider...")
-            logger.info("Shifting to OpenAI provider")
-            response = await _call_openai(prompt, history, openai_key, client, db_path=db_path)
+            # 2. Smart shift to Gemini if Groq failed
+            if not response and gemini_key:
+                print(f"[AI Agent] [Shift] Smart shifting to Gemini (Groq unavailable or failed)...")
+                logger.info("Smart shifting to Gemini")
+                response = await _call_gemini(prompt, history, gemini_key, client, db_path=db_path)
+
+            # 3. Tertiary: OpenAI
+            if not response and openai_key:
+                print(f"[AI Agent] [Shift] Shifting to OpenAI provider...")
+                logger.info("Shifting to OpenAI provider")
+                response = await _call_openai(prompt, history, openai_key, client, db_path=db_path)
+        else:
+            # Default primary: Gemini (with fast gemini-3.1-flash-lite and smart shifting)
+            # 1. Primary: Gemini
+            if gemini_key:
+                print(f"[AI Agent] Attempting primary provider: Gemini...")
+                response = await _call_gemini(prompt, history, gemini_key, client, db_path=db_path)
+
+            # 2. Smart shift to Groq if Gemini failed or was unconfigured
+            if not response and groq_key:
+                if gemini_key:
+                    print(f"[AI Agent] [Shift] Smart shifting to Groq (Gemini unavailable or failed)...")
+                    logger.info("Smart shifting to Groq")
+                else:
+                    print(f"[AI Agent] Attempting provider: Groq...")
+                    logger.info("Attempting provider: Groq")
+                response = await _call_groq(prompt, history, groq_key, client, db_path=db_path)
+
+            # 3. Tertiary: OpenAI
+            if not response and openai_key:
+                print(f"[AI Agent] [Shift] Shifting to OpenAI provider...")
+                logger.info("Shifting to OpenAI provider")
+                response = await _call_openai(prompt, history, openai_key, client, db_path=db_path)
 
         # 4. Final: Deterministic NLP fallback
         if not response:

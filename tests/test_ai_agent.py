@@ -428,7 +428,7 @@ async def test_ask_ai_agent_gemini_direct_text(
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     def gemini_mock(request: httpx.Request) -> httpx.Response:
-        assert "gemini-1.5-flash" in str(request.url)
+        assert "gemini-2.5-flash" in str(request.url)
         return httpx.Response(
             200,
             json={

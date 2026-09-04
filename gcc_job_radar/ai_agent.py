@@ -469,7 +469,7 @@ async def _call_gemini(
     db_path: Optional[Path] = None,
 ) -> str:
     """Call Google Gemini REST API with multi-turn tool calling and conversational synthesis."""
-    model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
     # Build multi-turn contents

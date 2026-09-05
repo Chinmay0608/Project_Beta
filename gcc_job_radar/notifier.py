@@ -21,6 +21,7 @@ async def send_discord_notification(
     webhook_url: str, new_jobs: list[JobPosting], client: httpx.AsyncClient
 ) -> bool:
     """Send formatted Discord webhook embeds for newly detected job postings."""
+    webhook_url = webhook_url.strip() if webhook_url else ""
     if not webhook_url or not new_jobs:
         return False
 
@@ -74,6 +75,8 @@ async def send_telegram_notification(
     bot_token: str, chat_id: str, new_jobs: list[JobPosting], client: httpx.AsyncClient
 ) -> bool:
     """Send formatted Telegram message via Bot API for newly detected postings."""
+    bot_token = bot_token.strip() if bot_token else ""
+    chat_id = chat_id.strip() if chat_id else ""
     if not bot_token or not chat_id or not new_jobs:
         return False
 
@@ -145,9 +148,9 @@ async def dispatch_notifications(
     from gcc_job_radar.db import filter_unalerted_jobs, record_dispatched_alerts
 
     # Fallback to environment variables
-    discord_url = discord_webhook or os.getenv("DISCORD_WEBHOOK_URL")
-    tg_token = telegram_token or os.getenv("TELEGRAM_BOT_TOKEN")
-    tg_chat = telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    discord_url = (discord_webhook or os.getenv("DISCORD_WEBHOOK_URL") or "").strip()
+    tg_token = (telegram_token or os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+    tg_chat = (telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID") or "").strip()
 
     if not discord_url and not (tg_token and tg_chat):
         return

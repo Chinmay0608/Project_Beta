@@ -196,7 +196,13 @@ async def ddg_search_async(
             headers=headers,
             timeout=15.0,
         )
-        if resp.status_code != 200:
+        if resp.status_code == 202:
+            console.print(
+                "    [bold yellow][!][/bold yellow] DuckDuckGo anti-bot challenge triggered (HTTP 202). "
+                "DDG has temporarily rate-limited search queries from this IP."
+            )
+            return []
+        elif resp.status_code != 200:
             console.print(f"    [bold yellow][!][/bold yellow] DDG returned status {resp.status_code} for query")
             return []
         parser = DDGLinkParser()

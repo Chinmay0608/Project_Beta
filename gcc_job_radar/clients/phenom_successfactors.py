@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 import httpx
+import orjson
 from pydantic import ValidationError
 
 from gcc_job_radar.clients.base import BaseATSClient
@@ -37,11 +38,12 @@ class PhenomSuccessFactorsClient(BaseATSClient):
                     endpoint,
                     params={"country": "India", "limit": 100},
                     headers={"Accept": "application/json"},
+                    timeout=self.timeout,
                 )
                 if response.status_code != 200:
                     continue
 
-                data: Any = response.json()
+                data: Any = orjson.loads(response.content)
                 jobs = []
                 if isinstance(data, list):
                     jobs = data
@@ -106,7 +108,7 @@ class PhenomSuccessFactorsClient(BaseATSClient):
                 if postings:
                     break
 
-            except (httpx.HTTPError, Exception) as e:
+            except (httpx.TimeoutException, httpx.HTTPError, Exception) as e:
                 logger.debug("Error querying endpoint %s for %s: %s", endpoint, company.name, e)
 
         return postings

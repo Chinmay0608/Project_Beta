@@ -2,13 +2,30 @@
 
 import pytest
 
-from gcc_job_radar.config import COMPANIES
+from gcc_job_radar.config import COMPANIES, DORMANT_COMPANIES
 from gcc_job_radar.models import ATSProvider, CompanyConfig
 
 
 def test_company_registry_total_count() -> None:
-    """Verify registry contains exactly 319 target GCCs, banks, and tech centers."""
-    assert len(COMPANIES) == 319
+    """Verify registry contains exactly 1492 active target GCCs, banks, and tech centers."""
+    assert len(COMPANIES) == 1492
+
+
+def test_dormant_companies_registry() -> None:
+    """Verify dormant companies file holds paused companies like Backblaze with valid configs."""
+    assert len(DORMANT_COMPANIES) >= 1
+    dormant_names = [c.name.lower() for c in DORMANT_COMPANIES]
+    assert "backblaze" in dormant_names
+
+    # Ensure dormant companies are excluded from active scanning list
+    active_names = [c.name.lower() for c in COMPANIES]
+    assert "backblaze" not in active_names
+
+    for company in DORMANT_COMPANIES:
+        assert isinstance(company, CompanyConfig)
+        assert isinstance(company.name, str) and company.name.strip()
+        assert isinstance(company.provider, ATSProvider)
+        assert isinstance(company.board_token, str) and company.board_token.strip()
 
 
 def test_company_registry_field_integrity() -> None:

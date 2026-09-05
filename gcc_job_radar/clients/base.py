@@ -5,11 +5,15 @@ import httpx
 from gcc_job_radar.models import CompanyConfig, JobPosting
 
 
+DEFAULT_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
+
+
 class BaseATSClient(ABC):
     """Abstract base class for querying canonical ATS job boards."""
 
-    def __init__(self, client: httpx.AsyncClient) -> None:
+    def __init__(self, client: httpx.AsyncClient, timeout: httpx.Timeout = DEFAULT_TIMEOUT) -> None:
         self.client = client
+        self.timeout = timeout
 
     @abstractmethod
     async def fetch_jobs(self, company: CompanyConfig) -> list[JobPosting]:

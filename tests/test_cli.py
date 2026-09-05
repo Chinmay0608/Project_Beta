@@ -18,6 +18,7 @@ def test_cli_help() -> None:
     assert result.exit_code == 0
     assert "CLI tool to fetch verified entry-level tech roles in India" in result.output
     assert "--company" in result.output
+    assert "--provider" in result.output
     assert "--concurrency" in result.output
     assert "--new-only" in result.output
     assert "--stats" in result.output
@@ -172,3 +173,44 @@ def test_cli_json_and_csv_export(tmp_path: Path) -> None:
         assert len(lines) == 2
         assert "company,title,location,apply_url,published_date,provider" in lines[0]
         assert "Databricks,Software Engineer 1" in lines[1]
+
+
+def test_cli_provider_filter_success(tmp_path: Path) -> None:
+    """Verify CLI --provider filters scan target companies to specified ATS."""
+    db_file = tmp_path / "provider_test.db"
+    captured_companies = []
+
+    async def mock_scan(companies, **kwargs):
+        nonlocal captured_companies
+        captured_companies = companies
+        return []
+
+    with patch("gcc_job_radar.cli.scan_all_companies", side_effect=mock_scan):
+        result = runner.invoke(app, ["--provider", "greenhouse", "--db", str(db_file)])
+        assert result.exit_code == 0
+        assert len(captured_companies) > 0
+        assert all(c.provider == ATSProvider.GREENHOUSE for c in captured_companies)
+
+
+def test_cli_provider_filter_invalid() -> None:
+    """Verify CLI flags unknown provider with exit code 1 and lists valid options."""
+    result = runner.invoke(app, ["--provider", "nonexistent_ats_provider"])
+    assert result.exit_code == 1
+    assert "No companies found matching ATS provider" in result.output
+    assert "greenhouse" in result.output
+
+
+def test_cli_custom_concurrency(tmp_path: Path) -> None:
+    """Verify CLI passes custom --concurrency setting to scan_all_companies."""
+    db_file = tmp_path / "concurrency_test.db"
+    passed_concurrency = None
+
+    async def mock_scan(companies, concurrency, **kwargs):
+        nonlocal passed_concurrency
+        passed_concurrency = concurrency
+        return []
+
+    with patch("gcc_job_radar.cli.scan_all_companies", side_effect=mock_scan):
+        result = runner.invoke(app, ["--concurrency", "45", "--company", "Databricks", "--db", str(db_file)])
+        assert result.exit_code == 0
+        assert passed_concurrency == 45

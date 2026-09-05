@@ -42,3 +42,6 @@ findings.csv
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Scratch & Intermediate files
+targets_*.txt

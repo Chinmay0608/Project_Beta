@@ -481,7 +481,12 @@ async def _fallback_response(
         return text.strip()
 
     # 4. Check live intent
-    matched_companies = [c for c in COMPANIES if c.name.lower() in q or c.board_token.lower() in q]
+    matched_companies = [
+        c
+        for c in COMPANIES
+        if re.search(r"\b" + re.escape(c.name.lower()) + r"\b", q)
+        or re.search(r"\b" + re.escape(c.board_token.lower()) + r"\b", q)
+    ]
     is_live_request = any(term in q for term in ["live", "check", "scan", "fresh", "now", "update"])
 
     if matched_companies and is_live_request:

@@ -4,6 +4,7 @@ import logging
 import re
 from typing import Any
 import httpx
+import orjson
 from pydantic import ValidationError
 
 from gcc_job_radar.clients.base import BaseATSClient
@@ -51,12 +52,13 @@ class WorkdayClient(BaseATSClient):
                     "Accept": "application/json",
                     "Content-Type": "application/json",
                 },
+                timeout=self.timeout,
             )
             if response.status_code != 200:
                 logger.debug("Workday board %s returned status %s", company.board_token, response.status_code)
                 return postings
 
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = orjson.loads(response.content)
             jobs = data.get("jobPostings", [])
 
             for job in jobs:
@@ -106,7 +108,7 @@ class WorkdayClient(BaseATSClient):
                 except ValidationError as e:
                     logger.debug("Validation error parsing Workday job %s: %s", job_id, e)
 
-        except (httpx.HTTPError, Exception) as e:
+        except (httpx.TimeoutException, httpx.HTTPError, Exception) as e:
             logger.debug("Error fetching Workday jobs for %s: %s", company.name, e)
 
         return postings

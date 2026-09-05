@@ -6,6 +6,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from gcc_job_radar.filters import is_remote_opening
 from gcc_job_radar.models import JobPosting
 
 # Safe UTF-8 / Windows terminal console configuration
@@ -67,24 +68,62 @@ def render_results(jobs: list[JobPosting], is_new_only: bool = False) -> None:
         title_justify="left",
     )
 
+    table.add_column("ID", style="bold green", justify="right", no_wrap=True)
     table.add_column("Company", style="bold white", no_wrap=True)
     table.add_column("Position", style="cyan")
     table.add_column("Location", style="yellow")
     table.add_column("ATS", style="magenta", justify="center")
+
+    has_non_new_status = any(getattr(j, "status", "NEW").upper() != "NEW" for j in jobs)
+    if has_non_new_status:
+        table.add_column("Status", style="magenta", justify="center")
+
     table.add_column("Date", style="dim", justify="center", no_wrap=True)
     table.add_column("Apply Link", style="blue", overflow="fold")
 
-    for job in jobs:
+    remote_count = 0
+    for idx, job in enumerate(jobs, start=1):
+        is_rem = getattr(job, "is_remote", False) or is_remote_opening(job)
+        loc_str = job.location.strip()
+        if is_rem:
+            remote_count += 1
+            if "remote" not in loc_str.lower():
+                loc_display = f"{loc_str} [bold green](Remote)[/bold green]"
+            else:
+                loc_display = f"[bold green]{loc_str}[/bold green]"
+        else:
+            loc_display = loc_str
+
+        display_id = str(getattr(job, "numeric_id", None) or idx)
         apply_url_str = str(job.apply_url)
         hyperlink = f"[link={apply_url_str}][underline]{apply_url_str}[/underline][/link]"
-        table.add_row(
+
+        row_cells = [
+            display_id,
             job.company,
             job.title,
-            job.location,
+            loc_display,
             job.provider.value.upper(),
+        ]
+        if has_non_new_status:
+            stat = getattr(job, "status", "NEW").upper()
+            if stat == "APPLIED":
+                stat_styled = "[bold green]APPLIED[/bold green]"
+            elif stat == "DISMISSED":
+                stat_styled = "[bold yellow]DISMISSED[/bold yellow]"
+            elif stat == "REJECTED":
+                stat_styled = "[bold red]REJECTED[/bold red]"
+            elif stat == "INTERVIEWING":
+                stat_styled = "[bold cyan]INTERVIEWING[/bold cyan]"
+            else:
+                stat_styled = f"[dim]{stat}[/dim]"
+            row_cells.append(stat_styled)
+
+        row_cells.extend([
             job.published_date or "Active",
             hyperlink,
-        )
+        ])
+        table.add_row(*row_cells)
 
     console.print()
     console.print(table)
@@ -92,14 +131,16 @@ def render_results(jobs: list[JobPosting], is_new_only: bool = False) -> None:
     # Print explicit clickable URLs list for terminals that don't support table OSC 8 hyperlinks or truncate them
     console.print("\n[bold cyan]Direct Apply Links:[/bold cyan]")
     for idx, job in enumerate(jobs, start=1):
+        display_id = str(getattr(job, "numeric_id", None) or idx)
         apply_url_str = str(job.apply_url)
         console.print(
-            f"  {idx}. [bold white]{job.company}[/bold white] - [cyan]{job.title}[/cyan]\n"
+            f"  {display_id}. [bold white]{job.company}[/bold white] - [cyan]{job.title}[/cyan]\n"
             f"     [bold underline blue]{apply_url_str}[/bold underline blue]"
         )
     label = "new" if is_new_only else "active"
+    remote_summary = f" ([bold cyan]{remote_count}[/bold cyan] 100% remote)" if remote_count > 0 else ""
     console.print(
-        f"\n[bold green][+][/bold green] Found [bold green]{len(jobs)}[/bold green] {label} entry-level opening(s)."
+        f"\n[bold green][+][/bold green] Found [bold green]{len(jobs)}[/bold green] {label} entry-level opening(s){remote_summary}."
     )
 
 

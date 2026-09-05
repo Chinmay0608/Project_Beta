@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 import httpx
+import orjson
 from pydantic import ValidationError
 
 from gcc_job_radar.clients.base import BaseATSClient
@@ -23,12 +24,12 @@ class SmartRecruitersClient(BaseATSClient):
 
         try:
             # Request up to 100 recent postings
-            response = await self.client.get(url, params={"limit": 100})
+            response = await self.client.get(url, params={"limit": 100}, timeout=self.timeout)
             if response.status_code != 200:
                 logger.debug("SmartRecruiters board %s returned status %s", company.board_token, response.status_code)
                 return postings
 
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = orjson.loads(response.content)
             jobs = data.get("content", [])
 
             for job in jobs:
@@ -73,7 +74,7 @@ class SmartRecruitersClient(BaseATSClient):
                 except ValidationError as e:
                     logger.debug("Validation error parsing SmartRecruiters job %s: %s", job.get("id"), e)
 
-        except (httpx.HTTPError, Exception) as e:
+        except (httpx.TimeoutException, httpx.HTTPError, Exception) as e:
             logger.debug("Error fetching SmartRecruiters jobs for %s: %s", company.name, e)
 
         return postings

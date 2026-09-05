@@ -1,8 +1,7 @@
-"""SQLite state tracking and persistence for GCC Job Radar."""
-
+from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
-from typing import Any, Optional
+from typing import Any, Optional, Union
 import urllib.parse
 
 from gcc_job_radar.models import ATSProvider, JobPosting
@@ -119,16 +118,71 @@ def init_db(db_path: Optional[Path] = None) -> None:
                 provider TEXT NOT NULL,
                 published_date TEXT,
                 is_active INTEGER DEFAULT 1,
+                is_remote INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'NEW',
+                applied_at TIMESTAMP NULL,
+                notes TEXT NULL,
                 first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             """
         )
-        # Migrate is_active column if missing from earlier migrations
-        cursor.execute("PRAGMA table_info(seen_jobs)")
-        columns = [row[1] for row in cursor.fetchall()]
-        if "is_active" not in columns:
-            cursor.execute("ALTER TABLE seen_jobs ADD COLUMN is_active INTEGER DEFAULT 1")
+        # Migrate columns if missing from earlier migrations
+        for tbl in ("seen_jobs", "jobs"):
+            cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{tbl}'")
+            if cursor.fetchone():
+                cursor.execute(f"PRAGMA table_info({tbl})")
+                columns = [row[1] for row in cursor.fetchall()]
+                if "is_active" not in columns:
+                    cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN is_active INTEGER DEFAULT 1")
+                if "is_remote" not in columns:
+                    cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN is_remote INTEGER DEFAULT 0")
+                if "status" not in columns:
+                    cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN status TEXT DEFAULT 'NEW'")
+                if "applied_at" not in columns:
+                    cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN applied_at TIMESTAMP NULL")
+                if "notes" not in columns:
+                    cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN notes TEXT NULL")
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_seen_jobs_status ON seen_jobs(status);")
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'")
+        if not cursor.fetchone():
+            cursor.execute("CREATE VIEW IF NOT EXISTS jobs AS SELECT rowid AS numeric_id, * FROM seen_jobs;")
+
+        # Backfill is_remote for any pre-existing records matching remote patterns
+        cursor.execute(
+            """
+            UPDATE seen_jobs 
+            SET is_remote = 1 
+            WHERE is_remote = 0 
+              AND (
+                  lower(location) LIKE '%remote%' 
+                  OR lower(location) LIKE '%wfh%' 
+                  OR lower(location) LIKE '%work from home%' 
+                  OR lower(location) LIKE '%distributed%'
+                  OR lower(location) LIKE '%anywhere in india%'
+              )
+              AND NOT (
+                  lower(location) LIKE '%us remote%'
+                  OR lower(location) LIKE '%remote - us%'
+                  OR lower(location) LIKE '%remote (us)%'
+                  OR lower(location) LIKE '%remote, us%'
+                  OR lower(location) LIKE '%remote - usa%'
+                  OR lower(location) LIKE '%remote - north america%'
+                  OR lower(location) LIKE '%emea remote%'
+                  OR lower(location) LIKE '%remote - emea%'
+                  OR lower(location) LIKE '%remote - europe%'
+                  OR lower(location) LIKE '%uk remote%'
+                  OR lower(location) LIKE '%remote - uk%'
+                  OR lower(location) LIKE '%canada remote%'
+                  OR lower(location) LIKE '%remote - canada%'
+                  OR lower(location) LIKE '%germany remote%'
+                  OR lower(location) LIKE '%australia remote%'
+                  OR lower(location) LIKE '%latam remote%'
+                  OR lower(location) LIKE '%remote - latam%'
+              )
+            """
+        )
 
         cursor.execute(
             """
@@ -335,7 +389,8 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                         apply_url = ?,
                         provider = ?,
                         published_date = COALESCE(NULLIF(?, ''), published_date),
-                        is_active = 1
+                        is_active = 1,
+                        is_remote = ?
                     WHERE id = ?
                     """,
                     (
@@ -345,6 +400,7 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                         clean_url,
                         job.provider.value,
                         job.published_date or "Active",
+                        1 if job.is_remote else 0,
                         matched_id,
                     ),
                 )
@@ -352,9 +408,9 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                 cursor.execute(
                     """
                     INSERT INTO seen_jobs (
-                        id, company, title, location, apply_url, provider, published_date, is_active, first_seen_at, last_seen_at
+                        id, company, title, location, apply_url, provider, published_date, is_active, is_remote, status, applied_at, notes, first_seen_at, last_seen_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ON CONFLICT(id) DO UPDATE SET
                         last_seen_at = CURRENT_TIMESTAMP,
                         company = excluded.company,
@@ -362,7 +418,8 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                         location = excluded.location,
                         apply_url = excluded.apply_url,
                         published_date = excluded.published_date,
-                        is_active = 1
+                        is_active = 1,
+                        is_remote = excluded.is_remote
                     """,
                     (
                         job_key,
@@ -372,10 +429,26 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                         clean_url,
                         job.provider.value,
                         job.published_date or "Active",
+                        1 if job.is_remote else 0,
+                        getattr(job, "status", None) or "NEW",
+                        getattr(job, "applied_at", None),
+                        getattr(job, "notes", None),
                     ),
                 )
 
         conn.commit()
+
+        # Attach persisted database rowid, status, applied_at, and notes back to the JobPosting instances
+        cursor.execute("SELECT rowid, id, status, applied_at, notes FROM seen_jobs")
+        db_map = {row[1]: (row[0], row[2], row[3], row[4]) for row in cursor.fetchall()}
+        for j in jobs:
+            key = make_job_key(j)
+            if key in db_map:
+                rowid, stat, app_at, nts = db_map[key]
+                j.numeric_id = rowid
+                j.status = stat
+                j.applied_at = app_at
+                j.notes = nts
 
 
 def get_stats(db_path: Optional[Path] = None) -> dict[str, Any]:
@@ -387,6 +460,9 @@ def get_stats(db_path: Optional[Path] = None) -> dict[str, Any]:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM seen_jobs")
         total_tracked = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM seen_jobs WHERE is_remote = 1")
+        total_remote = cursor.fetchone()[0]
 
         cursor.execute("SELECT MIN(first_seen_at), MAX(last_seen_at) FROM seen_jobs")
         first_recorded, last_active = cursor.fetchone()
@@ -403,6 +479,7 @@ def get_stats(db_path: Optional[Path] = None) -> dict[str, Any]:
 
     return {
         "total_tracked": total_tracked,
+        "total_remote": total_remote,
         "company_breakdown": company_counts,
         "first_recorded": first_recorded,
         "last_active": last_active,
@@ -410,30 +487,43 @@ def get_stats(db_path: Optional[Path] = None) -> dict[str, Any]:
     }
 
 
-def get_latest_jobs(limit: int = 5, db_path: Optional[Path] = None) -> list[dict[str, Any]]:
+def get_latest_jobs(
+    limit: int = 5,
+    status: Optional[str] = "NEW",
+    db_path: Optional[Path] = None,
+) -> list[dict[str, Any]]:
     """Retrieve the most recently recorded or active jobs from the database, deduplicated by role."""
     init_db(db_path)
     target_path = get_db_path(db_path)
+
+    inner_where = "WHERE 1=1"
+    params: list[Any] = []
+    if status is not None and status.strip():
+        stat_norm = status.strip().upper()
+        if stat_norm != "ALL":
+            inner_where += " AND UPPER(status) = ?"
+            params.append(stat_norm)
 
     with sqlite3.connect(target_path) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute(
-            """
-            SELECT id, company, title, location, apply_url, provider, published_date, first_seen_at, last_seen_at
+            f"""
+            SELECT rowid AS numeric_id, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, first_seen_at, last_seen_at
             FROM (
-                SELECT id, company, title, location, apply_url, provider, published_date, first_seen_at, last_seen_at,
+                SELECT rowid, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, first_seen_at, last_seen_at,
                        ROW_NUMBER() OVER (
                            PARTITION BY lower(company), lower(title), lower(location)
                            ORDER BY last_seen_at DESC, first_seen_at DESC
                        ) as rn
                 FROM seen_jobs
+                {inner_where}
             )
             WHERE rn = 1
             ORDER BY last_seen_at DESC, first_seen_at DESC
             LIMIT ?
             """,
-            (max(1, limit),),
+            params + [max(1, limit)],
         )
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
@@ -443,6 +533,8 @@ def query_jobs(
     title_keyword: Optional[str] = None,
     location: Optional[str] = None,
     company: Optional[str] = None,
+    is_remote: Optional[bool] = None,
+    status: Optional[str] = "NEW",
     limit: int = 5,
     db_path: Optional[Path] = None,
 ) -> list[dict[str, Any]]:
@@ -453,6 +545,12 @@ def query_jobs(
     inner_where = "WHERE 1=1"
     params: list[Any] = []
 
+    if status is not None and status.strip():
+        stat_norm = status.strip().upper()
+        if stat_norm != "ALL":
+            inner_where += " AND UPPER(status) = ?"
+            params.append(stat_norm)
+
     if company and company.strip():
         inner_where += " AND company LIKE ?"
         params.append(f"%{company.strip()}%")
@@ -460,6 +558,11 @@ def query_jobs(
     if title_keyword and title_keyword.strip():
         inner_where += " AND title LIKE ?"
         params.append(f"%{title_keyword.strip()}%")
+
+    if is_remote is True:
+        inner_where += " AND is_remote = 1"
+    elif is_remote is False:
+        inner_where += " AND is_remote = 0"
 
     if location and location.strip():
         loc_str = location.strip().lower()
@@ -474,9 +577,9 @@ def query_jobs(
             params.append(f"%{loc_str}%")
 
     query = f"""
-        SELECT id, company, title, location, apply_url, provider, published_date, first_seen_at, last_seen_at
+        SELECT rowid AS numeric_id, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, first_seen_at, last_seen_at
         FROM (
-            SELECT id, company, title, location, apply_url, provider, published_date, first_seen_at, last_seen_at,
+            SELECT rowid, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, first_seen_at, last_seen_at,
                    ROW_NUMBER() OVER (
                        PARTITION BY lower(company), lower(title), lower(location)
                        ORDER BY last_seen_at DESC, first_seen_at DESC
@@ -496,3 +599,131 @@ def query_jobs(
         cursor.execute(query, params)
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
+
+
+VALID_JOB_STATUSES = {"NEW", "APPLIED", "INTERVIEWING", "REJECTED", "DISMISSED"}
+
+
+def mark_job_status(
+    job_id: Union[int, str],
+    status: str,
+    notes: Optional[str] = None,
+    db_path: Optional[Path] = None,
+) -> bool:
+    """Update tracking status (NEW, APPLIED, INTERVIEWING, REJECTED, DISMISSED) and notes for a job.
+
+    Accepts numeric rowid (e.g. 12 or "12") or string ID (e.g. "greenhouse_celonis_7791267003").
+    """
+    if not status or not isinstance(status, str):
+        raise ValueError("Job status must be a non-empty string.")
+
+    status_norm = status.strip().upper()
+    if status_norm not in VALID_JOB_STATUSES:
+        raise ValueError(
+            f"Invalid status '{status}'. Must be one of: {', '.join(sorted(VALID_JOB_STATUSES))}"
+        )
+
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+
+    with sqlite3.connect(target_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen_jobs'")
+        table_name = "seen_jobs" if cursor.fetchone() else "jobs"
+
+        is_num = isinstance(job_id, int) or (isinstance(job_id, str) and str(job_id).strip().isdigit())
+        if is_num:
+            where_clause = "rowid = ? OR id = ? OR id LIKE ?"
+            match_params: list[Any] = [int(job_id), str(job_id).strip(), f"%_{str(job_id).strip()}"]
+        else:
+            raw_id = str(job_id).strip()
+            where_clause = "id = ? OR id LIKE ?"
+            match_params = [raw_id, f"%_{raw_id}"]
+
+        if status_norm == "APPLIED":
+            now_iso = datetime.now(timezone.utc).isoformat()
+            if notes is not None:
+                cursor.execute(
+                    f"UPDATE {table_name} SET status = ?, applied_at = COALESCE(applied_at, ?), notes = ? WHERE {where_clause}",
+                    [status_norm, now_iso, notes] + match_params,
+                )
+            else:
+                cursor.execute(
+                    f"UPDATE {table_name} SET status = ?, applied_at = COALESCE(applied_at, ?) WHERE {where_clause}",
+                    [status_norm, now_iso] + match_params,
+                )
+        else:
+            if notes is not None:
+                cursor.execute(
+                    f"UPDATE {table_name} SET status = ?, notes = ? WHERE {where_clause}",
+                    [status_norm, notes] + match_params,
+                )
+            else:
+                cursor.execute(
+                    f"UPDATE {table_name} SET status = ? WHERE {where_clause}",
+                    [status_norm] + match_params,
+                )
+
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_job_by_id(
+    job_id: Union[int, str],
+    db_path: Optional[Path] = None,
+) -> Optional[dict[str, Any]]:
+    """Retrieve a single job dictionary by numeric rowid or string ID."""
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+
+    with sqlite3.connect(target_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen_jobs'")
+        table_name = "seen_jobs" if cursor.fetchone() else "jobs"
+
+        is_num = isinstance(job_id, int) or (isinstance(job_id, str) and str(job_id).strip().isdigit())
+        if is_num:
+            cursor.execute(
+                f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE rowid = ? OR id = ? OR id LIKE ? LIMIT 1",
+                (int(job_id), str(job_id).strip(), f"%_{str(job_id).strip()}"),
+            )
+        else:
+            raw_id = str(job_id).strip()
+            cursor.execute(
+                f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE id = ? OR id LIKE ? LIMIT 1",
+                (raw_id, f"%_{raw_id}"),
+            )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_jobs_by_status(
+    status: str,
+    limit: Optional[int] = None,
+    db_path: Optional[Path] = None,
+) -> list[dict[str, Any]]:
+    """Retrieve jobs with a specific status ('NEW', 'APPLIED', 'INTERVIEWING', 'REJECTED', 'DISMISSED', or 'ALL')."""
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+
+    status_norm = status.strip().upper()
+    with sqlite3.connect(target_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen_jobs'")
+        table_name = "seen_jobs" if cursor.fetchone() else "jobs"
+
+        if status_norm == "ALL":
+            query = f"SELECT rowid AS numeric_id, * FROM {table_name} ORDER BY last_seen_at DESC"
+            params: list[Any] = []
+        else:
+            query = f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE UPPER(status) = ? ORDER BY last_seen_at DESC"
+            params = [status_norm]
+
+        if limit is not None and limit > 0:
+            query += " LIMIT ?"
+            params.append(limit)
+
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]

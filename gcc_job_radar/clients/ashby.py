@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 import httpx
+import orjson
 from pydantic import ValidationError
 
 from gcc_job_radar.clients.base import BaseATSClient
@@ -26,12 +27,12 @@ class AshbyClient(BaseATSClient):
         postings: list[JobPosting] = []
 
         try:
-            response = await self.client.get(url)
+            response = await self.client.get(url, timeout=self.timeout)
             if response.status_code != 200:
                 logger.debug("Ashby board %s returned status %s", company.board_token, response.status_code)
                 return postings
 
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = orjson.loads(response.content)
             jobs = data.get("jobs", [])
 
             for job in jobs:
@@ -85,7 +86,7 @@ class AshbyClient(BaseATSClient):
                 except ValidationError as e:
                     logger.debug("Validation error parsing Ashby job %s: %s", job.get("id"), e)
 
-        except (httpx.HTTPError, Exception) as e:
+        except (httpx.TimeoutException, httpx.HTTPError, Exception) as e:
             logger.debug("Error fetching Ashby jobs for %s: %s", company.name, e)
 
         return postings

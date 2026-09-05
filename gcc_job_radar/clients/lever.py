@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import logging
 from typing import Any
 import httpx
+import orjson
 from pydantic import ValidationError
 
 from gcc_job_radar.clients.base import BaseATSClient
@@ -27,12 +28,12 @@ class LeverClient(BaseATSClient):
         postings: list[JobPosting] = []
 
         try:
-            response = await self.client.get(url)
+            response = await self.client.get(url, timeout=self.timeout)
             if response.status_code != 200:
                 logger.debug("Lever board %s returned status %s", company.board_token, response.status_code)
                 return postings
 
-            jobs: list[dict[str, Any]] = response.json()
+            jobs: list[dict[str, Any]] = orjson.loads(response.content)
             if not isinstance(jobs, list):
                 return postings
 
@@ -92,7 +93,7 @@ class LeverClient(BaseATSClient):
                 except ValidationError as e:
                     logger.debug("Validation error parsing Lever job %s: %s", job.get("id"), e)
 
-        except (httpx.HTTPError, Exception) as e:
+        except (httpx.TimeoutException, httpx.HTTPError, Exception) as e:
             logger.debug("Error fetching Lever jobs for %s: %s", company.name, e)
 
         return postings

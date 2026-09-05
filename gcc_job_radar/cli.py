@@ -14,10 +14,20 @@ load_dotenv()
 
 from gcc_job_radar import __version__
 from gcc_job_radar.config import COMPANIES
-from gcc_job_radar.db import filter_new_jobs, get_stats, init_db, record_jobs
+from gcc_job_radar.db import (
+    filter_new_jobs,
+    get_job_by_id,
+    get_jobs_by_status,
+    get_stats,
+    init_db,
+    mark_job_status,
+    query_jobs,
+    record_jobs,
+)
 from gcc_job_radar.display import console, render_banner, render_results, render_stats
 from gcc_job_radar.engine import scan_all_companies
-from gcc_job_radar.models import JobPosting
+from gcc_job_radar.filters import is_remote_opening
+from gcc_job_radar.models import ATSProvider, JobPosting
 from gcc_job_radar.notifier import dispatch_notifications
 
 app = typer.Typer(
@@ -28,20 +38,33 @@ app = typer.Typer(
 
 
 def export_json(jobs: list[JobPosting], path: Path) -> None:
-    """Export postings to a formatted JSON file."""
+    """Export matching job postings to a JSON file."""
     data = [job.model_dump(mode="json") for job in jobs]
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+        json.dump(data, f, indent=2, default=str)
     console.print(f"[bold green][+][/bold green] Exported {len(jobs)} postings to JSON: [cyan]{path}[/cyan]")
 
 
 def export_csv(jobs: list[JobPosting], path: Path) -> None:
-    """Export postings to a CSV file."""
+    """Export matching job postings to a CSV file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["company", "title", "location", "apply_url", "published_date", "provider"]
     with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "company",
+                "title",
+                "location",
+                "apply_url",
+                "published_date",
+                "provider",
+                "is_remote",
+                "id",
+                "status",
+                "notes",
+            ],
+        )
         writer.writeheader()
         for job in jobs:
             writer.writerow(
@@ -52,6 +75,10 @@ def export_csv(jobs: list[JobPosting], path: Path) -> None:
                     "apply_url": str(job.apply_url),
                     "published_date": job.published_date or "Active",
                     "provider": job.provider.value,
+                    "is_remote": job.is_remote,
+                    "id": getattr(job, "numeric_id", None) or job.id,
+                    "status": getattr(job, "status", "NEW"),
+                    "notes": getattr(job, "notes", "") or "",
                 }
             )
     console.print(f"[bold green][+][/bold green] Exported {len(jobs)} postings to CSV: [cyan]{path}[/cyan]")
@@ -65,10 +92,23 @@ def scan(
         "-c",
         help="Filter scan to a specific company by name or board token.",
     ),
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider",
+        "-p",
+        help="Filter scan by ATS provider (e.g., greenhouse, ashby, lever, workday, smartrecruiters).",
+    ),
     concurrency: int = typer.Option(
-        15,
+        30,
         "--concurrency",
         help="Maximum concurrent HTTP requests to ATS endpoints.",
+    ),
+    remote_only: bool = typer.Option(
+        False,
+        "--remote-only",
+        "--remote",
+        "-r",
+        help="Only display and export 100% remote roles eligible in India.",
     ),
     new_only: bool = typer.Option(
         False,
@@ -119,13 +159,39 @@ def scan(
         render_stats(db_statistics)
         raise typer.Exit()
 
+    # Guard against direct Python function invocations passing OptionInfo defaults
+    if not isinstance(provider, str):
+        provider = None
+    if not isinstance(company, str):
+        company = None
+    if not isinstance(concurrency, int):
+        concurrency = 30
+    if not isinstance(remote_only, bool):
+        remote_only = False
+
     init_db(db_path)
 
     target_companies = COMPANIES
+    if provider:
+        provider_norm = provider.strip().lower()
+        target_companies = [
+            c
+            for c in target_companies
+            if c.provider.value.lower() == provider_norm
+            or c.provider.name.lower() == provider_norm
+        ]
+        if not target_companies:
+            console.print(
+                f"[bold red]Error:[/bold red] No companies found matching ATS provider [yellow]'{provider}'[/yellow]."
+            )
+            valid_providers = ", ".join(p.value for p in ATSProvider)
+            console.print(f"[dim]Available providers: {valid_providers}[/dim]")
+            raise typer.Exit(code=1)
+
     if company:
         query = company.strip().lower()
         target_companies = [
-            c for c in COMPANIES if query in c.name.lower() or query in c.board_token.lower()
+            c for c in target_companies if query in c.name.lower() or query in c.board_token.lower()
         ]
         if not target_companies:
             console.print(
@@ -164,6 +230,9 @@ def scan(
         )
         progress.update(task_id, description="[bold green]Scan completed![/bold green]")
 
+    if remote_only:
+        all_jobs = [j for j in all_jobs if getattr(j, "is_remote", False) or is_remote_opening(j)]
+
     new_jobs, existing_jobs = filter_new_jobs(all_jobs, db_path)
 
     # Dispatch notifications if new postings exist
@@ -178,20 +247,195 @@ def scan(
             )
         )
 
-    # Persist all current active jobs
+    # Persist all current active jobs (attaches rowid, status, notes to all_jobs)
     record_jobs(all_jobs, db_path)
 
+    # Default output displays only unapplied (status = 'NEW') jobs
+    unapplied_jobs = [j for j in all_jobs if getattr(j, "status", "NEW").upper() == "NEW"]
+    unapplied_new_jobs = [j for j in new_jobs if getattr(j, "status", "NEW").upper() == "NEW"]
+
     if new_only:
-        render_results(new_jobs, is_new_only=True)
-        jobs_to_export = new_jobs
+        render_results(unapplied_new_jobs, is_new_only=True)
+        jobs_to_export = unapplied_new_jobs
     else:
-        render_results(all_jobs, is_new_only=False)
-        jobs_to_export = all_jobs
+        render_results(unapplied_jobs, is_new_only=False)
+        jobs_to_export = unapplied_jobs
 
     if json_path:
         export_json(jobs_to_export, json_path)
     if csv_path:
         export_csv(jobs_to_export, csv_path)
+
+
+@app.command("list")
+def list_jobs(
+    company: Optional[str] = typer.Option(
+        None,
+        "--company",
+        "-c",
+        help="Filter listed jobs by company name.",
+    ),
+    title: Optional[str] = typer.Option(
+        None,
+        "--title",
+        "-t",
+        help="Filter listed jobs by title keyword.",
+    ),
+    status: str = typer.Option(
+        "NEW",
+        "--status",
+        "-s",
+        help="Filter listed jobs by status ('NEW', 'APPLIED', 'INTERVIEWING', 'REJECTED', 'DISMISSED', or 'ALL'). [default: NEW]",
+    ),
+    remote_only: bool = typer.Option(
+        False,
+        "--remote-only",
+        "--remote",
+        "-r",
+        help="Only list 100% remote roles eligible in India.",
+    ),
+    limit: int = typer.Option(
+        25,
+        "--limit",
+        "-l",
+        help="Maximum number of jobs to list.",
+    ),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+    json_path: Optional[Path] = typer.Option(
+        None,
+        "--json",
+        "-j",
+        help="Path to export results to a JSON file.",
+    ),
+    csv_path: Optional[Path] = typer.Option(
+        None,
+        "--csv",
+        help="Path to export results to a CSV file.",
+    ),
+) -> None:
+    """List tracked entry-level jobs from the local database."""
+    init_db(db_path)
+    if not isinstance(remote_only, bool):
+        remote_only = False
+
+    jobs_dict = query_jobs(
+        company=company,
+        title_keyword=title,
+        is_remote=True if remote_only else None,
+        status=status,
+        limit=limit,
+        db_path=db_path,
+    )
+    job_postings: list[JobPosting] = []
+    for jd in jobs_dict:
+        try:
+            job_postings.append(
+                JobPosting(
+                    id=jd["id"],
+                    numeric_id=jd.get("numeric_id"),
+                    company=jd["company"],
+                    title=jd["title"],
+                    location=jd["location"],
+                    apply_url=jd["apply_url"],
+                    published_date=jd.get("published_date") or "Active",
+                    provider=ATSProvider(jd["provider"]),
+                    is_remote=bool(jd.get("is_remote", False)),
+                    status=jd.get("status", "NEW"),
+                    applied_at=jd.get("applied_at"),
+                    notes=jd.get("notes"),
+                )
+            )
+        except Exception:
+            continue
+
+    if remote_only:
+        job_postings = [j for j in job_postings if getattr(j, "is_remote", False) or is_remote_opening(j)]
+
+    render_results(job_postings, is_new_only=False)
+
+    if json_path:
+        export_json(job_postings, json_path)
+    if csv_path:
+        export_csv(job_postings, csv_path)
+
+
+@app.command("apply")
+def apply_job(
+    job_id: str = typer.Argument(
+        ...,
+        help="Job ID to mark as APPLIED (numeric ID from table or unique job key).",
+    ),
+    notes: Optional[str] = typer.Option(
+        None,
+        "--notes",
+        "-n",
+        help="Optional notes for this application (e.g. referral, recruiter contact, date).",
+    ),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+) -> None:
+    """Mark a job as APPLIED with an automatic timestamp and optional notes."""
+    init_db(db_path)
+    job = get_job_by_id(job_id, db_path=db_path)
+    if not job:
+        console.print(f"[bold red]Error:[/bold red] Job with ID [yellow]'{job_id}'[/yellow] not found in database.")
+        raise typer.Exit(code=1)
+
+    mark_job_status(job_id=job_id, status="APPLIED", notes=notes, db_path=db_path)
+    disp_id = job.get("numeric_id") or job_id
+    notes_msg = f" (Notes: [dim]{notes}[/dim])" if notes else ""
+    console.print(
+        f"[bold green][+][/bold green] Marked job [bold cyan]#{disp_id}[/bold cyan] "
+        f"([bold white]{job['company']}[/bold white] - [cyan]{job['title']}[/cyan]) as [bold green]APPLIED[/bold green].{notes_msg}"
+    )
+
+
+@app.command("dismiss")
+def dismiss_job(
+    job_id: str = typer.Argument(
+        ...,
+        help="Job ID to dismiss (numeric ID from table or unique job key).",
+    ),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+) -> None:
+    """Mark a job as DISMISSED so it will no longer appear in scans or default listings."""
+    init_db(db_path)
+    job = get_job_by_id(job_id, db_path=db_path)
+    if not job:
+        console.print(f"[bold red]Error:[/bold red] Job with ID [yellow]'{job_id}'[/yellow] not found in database.")
+        raise typer.Exit(code=1)
+
+    mark_job_status(job_id=job_id, status="DISMISSED", db_path=db_path)
+    disp_id = job.get("numeric_id") or job_id
+    console.print(
+        f"[bold yellow][-][/bold yellow] Marked job [bold cyan]#{disp_id}[/bold cyan] "
+        f"([bold white]{job['company']}[/bold white] - [cyan]{job['title']}[/cyan]) as [bold yellow]DISMISSED[/bold yellow]. "
+        "It will no longer appear in scans or default listings."
+    )
+
+
+@app.command("hide", hidden=True)
+def hide_job(
+    job_id: str = typer.Argument(..., help="Job ID to hide."),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+) -> None:
+    """Alias for dismiss command."""
+    dismiss_job(job_id=job_id, db_path=db_path)
 
 
 @app.command("bot")
@@ -251,10 +495,23 @@ def main(
         "-c",
         help="Filter scan to a specific company by name or board token.",
     ),
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider",
+        "-p",
+        help="Filter scan by ATS provider (e.g., greenhouse, ashby, lever, workday, smartrecruiters).",
+    ),
     concurrency: int = typer.Option(
-        15,
+        30,
         "--concurrency",
         help="Maximum concurrent HTTP requests to ATS endpoints.",
+    ),
+    remote_only: bool = typer.Option(
+        False,
+        "--remote-only",
+        "--remote",
+        "-r",
+        help="Only display and export 100% remote roles eligible in India.",
     ),
     new_only: bool = typer.Option(
         False,
@@ -307,7 +564,9 @@ def main(
     if ctx.invoked_subcommand is None:
         scan(
             company=company,
+            provider=provider,
             concurrency=concurrency,
+            remote_only=remote_only,
             new_only=new_only,
             stats=stats,
             db_path=db_path,

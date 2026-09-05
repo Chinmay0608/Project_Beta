@@ -1,7 +1,11 @@
 """Unit tests for title and location filtering logic."""
 
 import pytest
-from gcc_job_radar.filters import matches_india_location, matches_target_title
+from gcc_job_radar.filters import (
+    is_potential_india_location,
+    matches_india_location,
+    matches_target_title,
+)
 
 
 @pytest.mark.parametrize(
@@ -10,31 +14,63 @@ from gcc_job_radar.filters import matches_india_location, matches_target_title
         "SDE 1",
         "SDE-1",
         "SDE I",
+        "SDE-I",
         "Software Engineer 1",
         "Software Engineer I",
         "Software Development Engineer I",
+        "Software Development Engineer - I",
         "Software Developer 1",
+        "Engineer 1",
+        "Engineer I",
         "Associate Software Engineer",
         "Associate QA Engineer",
         "Associate Systems Engineer",
+        "Associate Backend Engineer",
+        "Associate Frontend Engineer",
+        "Associate Full Stack Engineer",
+        "Associate Cloud Engineer",
+        "Associate Data Engineer",
+        "Associate Platform Engineer",
+        "Associate SDET",
+        "Associate Developer",
+        "Associate Programmer",
         "Junior Software Engineer",
         "Junior Developer",
         "Junior Engineer",
+        "Jr. Software Engineer",
+        "Graduate Engineer Trainee",
+        "GET",
+        "GET - Software",
+        "Software Engineer Trainee",
+        "Engineering Trainee",
         "Graduate Software Engineer",
         "Graduate Technical Intern",
         "Graduate Software Developer",
         "Fresher",
         "Entry Level Software Engineer",
         "Entry-Level Software Developer",
+        "Technology Analyst",
+        "Software Engineering Analyst",
+        "Graduate Analyst",
+        "New Grad Software Engineer",
+        "New Grad Software Engineer (2026)",
+        "University Graduate Software Engineer",
+        "Campus Hire Developer",
+        "Early Career Software Engineer",
         "MTS 1",
         "MTS-1",
         "MTS I",
+        "MTS-I",
         "Member of Technical Staff 1",
+        "Member of Technical Staff - I",
         "Software Intern",
         "Engineering Intern",
         "Tech Intern",
         "SWE Intern",
         "Data Intern",
+        "Software Apprentice",
+        "Engineering Apprentice",
+        "Co-op Engineer",
     ],
 )
 def test_matches_target_title_positive(title: str) -> None:
@@ -46,6 +82,7 @@ def test_matches_target_title_positive(title: str) -> None:
     "title",
     [
         "Senior Software Engineer",
+        "Senior Software Engineer I",
         "Sr. Software Engineer",
         "Sr Software Engineer",
         "Staff Software Engineer",
@@ -83,7 +120,9 @@ def test_matches_target_title_positive(title: str) -> None:
         "Customer Support Associate",
         "Customer Success Specialist",
         "Associate System Engineer, SE Excellence Center - ANZ",
+        "SE Excellence Center",
         "Solutions Engineer",
+        "Solutions Engineer I",
         "Associate Solutions Engineer",
         "Pre-Sales Engineer",
         "Sales Engineer",
@@ -118,6 +157,10 @@ def test_matches_target_title_negative(title: str) -> None:
         ("BS in Computer Science or equivalent practical experience", False),
         ("<p>• 4+ years of experience (technology industry preferred)</p>", True),
         ("&lt;li&gt;Minimum 3+ years of experience&lt;/li&gt;", True),
+        ("2 - 4 years of relevant experience", True),
+        ("2-4 years of experience", True),
+        ("2 to 5 years of software engineering experience", True),
+        ("2 - 5 years of hands-on experience", True),
         ("", False),
         ("   ", False),
     ],
@@ -187,3 +230,16 @@ def test_matches_india_location_positive(location: str) -> None:
 def test_matches_india_location_negative(location: str) -> None:
     """Verify that non-Indian locations are rejected."""
     assert matches_india_location(location) is False
+
+
+def test_is_potential_india_location_fast_short_circuit() -> None:
+    """Verify fast string short-circuit checks discard foreign locations without regex."""
+    assert is_potential_india_location("Bengaluru, India") is True
+    assert is_potential_india_location("Hyderabad, Telangana") is True
+    assert is_potential_india_location("Pune") is True
+    assert is_potential_india_location("India (Remote)") is True
+
+    assert is_potential_india_location("San Francisco, CA") is False
+    assert is_potential_india_location("London, UK") is False
+    assert is_potential_india_location("Sydney, Australia") is False
+    assert is_potential_india_location("") is False

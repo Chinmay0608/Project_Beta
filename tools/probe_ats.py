@@ -431,6 +431,7 @@ def format_python_snippets(results: list[ProbeResult]) -> str:
 def append_to_config(
     results: list[ProbeResult],
     config_path: Path = CONFIG_PATH,
+    cluster: Optional[str] = None,
 ) -> int:
     """Append verified entries to gcc_job_radar/config.py COMPANIES list."""
     if not results:
@@ -445,9 +446,14 @@ def append_to_config(
     new_entries: list[str] = ["\n    # Newly probed and verified companies\n"]
     for r in results:
         provider_name = r.provider.name if hasattr(r.provider, "name") else str(r.provider).upper()
-        new_entries.append(
-            f'    CompanyConfig(name="{r.company_name}", provider=ATSProvider.{provider_name}, board_token="{r.board_token}"),\n'
-        )
+        if cluster:
+            new_entries.append(
+                f'    CompanyConfig(name="{r.company_name}", provider=ATSProvider.{provider_name}, board_token="{r.board_token}", cluster="{cluster}"),\n'
+            )
+        else:
+            new_entries.append(
+                f'    CompanyConfig(name="{r.company_name}", provider=ATSProvider.{provider_name}, board_token="{r.board_token}"),\n'
+            )
 
     insert_text = "".join(new_entries)
     if match:

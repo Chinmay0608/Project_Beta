@@ -7,8 +7,9 @@ from gcc_job_radar.models import ATSProvider, CompanyConfig
 
 
 def test_company_registry_total_count() -> None:
-    """Verify registry contains exactly 1492 active target GCCs, banks, and tech centers."""
-    assert len(COMPANIES) == 1492
+    """Verify registry contains at least 1492 active target GCCs, banks, and tech centers."""
+    assert len(COMPANIES) >= 1492
+    assert len(COMPANIES) == 1653
 
 
 def test_dormant_companies_registry() -> None:

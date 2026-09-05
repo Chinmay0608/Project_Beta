@@ -3,6 +3,7 @@
 import asyncio
 import csv
 import json
+import os
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
@@ -16,10 +17,12 @@ from gcc_job_radar import __version__
 from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.db import (
     filter_new_jobs,
+    filter_unalerted_jobs,
     get_job_by_id,
     get_jobs_by_status,
     get_stats,
     init_db,
+    make_job_key,
     mark_job_status,
     query_jobs,
     record_jobs,
@@ -235,11 +238,23 @@ def scan(
 
     new_jobs, existing_jobs = filter_new_jobs(all_jobs, db_path)
 
-    # Dispatch notifications if new postings exist
-    if new_jobs:
+    # Check for unalerted active postings (handles new jobs as well as retrying any failed prior dispatches)
+    unalerted_jobs = []
+    if notify_discord or os.getenv("DISCORD_WEBHOOK_URL"):
+        unalerted_jobs.extend(filter_unalerted_jobs(all_jobs, "discord", db_path))
+    if (notify_telegram_token and notify_telegram_chat) or (
+        os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID")
+    ):
+        unalerted_jobs.extend(filter_unalerted_jobs(all_jobs, "telegram", db_path))
+
+    jobs_to_notify_map = {make_job_key(j): j for j in (new_jobs + unalerted_jobs)}
+    jobs_to_notify = list(jobs_to_notify_map.values())
+
+    # Dispatch notifications if new or unalerted postings exist
+    if jobs_to_notify:
         asyncio.run(
             dispatch_notifications(
-                new_jobs=new_jobs,
+                new_jobs=jobs_to_notify,
                 discord_webhook=notify_discord,
                 telegram_token=notify_telegram_token,
                 telegram_chat_id=notify_telegram_chat,

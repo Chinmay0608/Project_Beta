@@ -256,3 +256,56 @@ def test_list_command_status_filtering(tmp_path: Path, sample_jobs: list[JobPost
     assert "Handshake" in res_all.output
     assert "Databricks" in res_all.output
     assert "Atlassian" in res_all.output
+
+
+def test_numeric_id_exact_rowid_no_wildcard_collision(tmp_path: Path) -> None:
+    """Regression test: numeric ID '3' must target rowid 3 and NOT match rowid 1 ending in '3'."""
+    test_db = tmp_path / "test_collision.db"
+    jobs = [
+        JobPosting(
+            id="greenhouse_celonis_7791267003",  # Ends in '3'
+            company="Celonis",
+            title="Associate Software Engineer - Java",
+            location="Bangalore, India",
+            apply_url="https://boards.greenhouse.io/celonis/jobs/7791267003",
+            published_date="2026-09-01",
+            provider=ATSProvider.GREENHOUSE,
+        ),
+        JobPosting(
+            id="ashby_aiprise_102",
+            company="AiPrise",
+            title="Software Engineer I",
+            location="Bengaluru, India",
+            apply_url="https://jobs.ashbyhq.com/aiprise/102",
+            published_date="2026-09-01",
+            provider=ATSProvider.ASHBY,
+        ),
+        JobPosting(
+            id="lever_veeva_90e4e761",
+            company="Veeva",
+            title="Associate Software Engineer - Release Engineer",
+            location="India - Hyderabad",
+            apply_url="https://jobs.lever.co/veeva/90e4e761",
+            published_date="2026-09-01",
+            provider=ATSProvider.LEVER,
+        ),
+    ]
+    record_jobs(jobs, db_path=test_db)
+
+    # Verify rowids: Celonis is 1, AiPrise is 2, Veeva is 3
+    celonis = get_job_by_id(1, db_path=test_db)
+    assert celonis["company"] == "Celonis"
+    veeva = get_job_by_id(3, db_path=test_db)
+    assert veeva["company"] == "Veeva"
+
+    # Invoke dismiss 3 via CLI
+    res = runner.invoke(app, ["dismiss", "3", "--db", str(test_db)])
+    assert res.exit_code == 0
+    assert "Veeva" in res.output
+    assert "Celonis" not in res.output
+
+    # Verify Veeva is DISMISSED and Celonis remains NEW
+    veeva_updated = get_job_by_id(3, db_path=test_db)
+    assert veeva_updated["status"] == "DISMISSED"
+    celonis_updated = get_job_by_id(1, db_path=test_db)
+    assert celonis_updated["status"] == "NEW"

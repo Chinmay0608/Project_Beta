@@ -623,6 +623,10 @@ def mark_job_status(
             f"Invalid status '{status}'. Must be one of: {', '.join(sorted(VALID_JOB_STATUSES))}"
         )
 
+    target_job = get_job_by_id(job_id, db_path=db_path)
+    if not target_job:
+        return False
+
     init_db(db_path)
     target_path = get_db_path(db_path)
 
@@ -631,37 +635,30 @@ def mark_job_status(
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen_jobs'")
         table_name = "seen_jobs" if cursor.fetchone() else "jobs"
 
-        is_num = isinstance(job_id, int) or (isinstance(job_id, str) and str(job_id).strip().isdigit())
-        if is_num:
-            where_clause = "rowid = ? OR id = ? OR id LIKE ?"
-            match_params: list[Any] = [int(job_id), str(job_id).strip(), f"%_{str(job_id).strip()}"]
-        else:
-            raw_id = str(job_id).strip()
-            where_clause = "id = ? OR id LIKE ?"
-            match_params = [raw_id, f"%_{raw_id}"]
+        target_rowid = target_job["numeric_id"]
+        now_iso = datetime.now(timezone.utc).isoformat()
 
         if status_norm == "APPLIED":
-            now_iso = datetime.now(timezone.utc).isoformat()
             if notes is not None:
                 cursor.execute(
-                    f"UPDATE {table_name} SET status = ?, applied_at = COALESCE(applied_at, ?), notes = ? WHERE {where_clause}",
-                    [status_norm, now_iso, notes] + match_params,
+                    f"UPDATE {table_name} SET status = ?, applied_at = COALESCE(applied_at, ?), notes = ? WHERE rowid = ?",
+                    (status_norm, now_iso, notes, target_rowid),
                 )
             else:
                 cursor.execute(
-                    f"UPDATE {table_name} SET status = ?, applied_at = COALESCE(applied_at, ?) WHERE {where_clause}",
-                    [status_norm, now_iso] + match_params,
+                    f"UPDATE {table_name} SET status = ?, applied_at = COALESCE(applied_at, ?) WHERE rowid = ?",
+                    (status_norm, now_iso, target_rowid),
                 )
         else:
             if notes is not None:
                 cursor.execute(
-                    f"UPDATE {table_name} SET status = ?, notes = ? WHERE {where_clause}",
-                    [status_norm, notes] + match_params,
+                    f"UPDATE {table_name} SET status = ?, notes = ? WHERE rowid = ?",
+                    (status_norm, notes, target_rowid),
                 )
             else:
                 cursor.execute(
-                    f"UPDATE {table_name} SET status = ? WHERE {where_clause}",
-                    [status_norm] + match_params,
+                    f"UPDATE {table_name} SET status = ? WHERE rowid = ?",
+                    (status_norm, target_rowid),
                 )
 
         conn.commit()
@@ -684,18 +681,40 @@ def get_job_by_id(
 
         is_num = isinstance(job_id, int) or (isinstance(job_id, str) and str(job_id).strip().isdigit())
         if is_num:
+            # 1. Exact numeric rowid match first
             cursor.execute(
-                f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE rowid = ? OR id = ? OR id LIKE ? LIMIT 1",
-                (int(job_id), str(job_id).strip(), f"%_{str(job_id).strip()}"),
+                f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE rowid = ? LIMIT 1",
+                (int(job_id),),
             )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+
+            # 2. Fallback to exact string id match if an ATS ID is numeric
+            cursor.execute(
+                f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE id = ? LIMIT 1",
+                (str(job_id).strip(),),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
         else:
             raw_id = str(job_id).strip()
+            # 1. Exact string id match
             cursor.execute(
-                f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE id = ? OR id LIKE ? LIMIT 1",
-                (raw_id, f"%_{raw_id}"),
+                f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE id = ? LIMIT 1",
+                (raw_id,),
             )
-        row = cursor.fetchone()
-        return dict(row) if row else None
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+
+            # 2. Match ATS specific ID suffix with escaped underscore
+            cursor.execute(
+                f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE id LIKE ? ESCAPE '\\' LIMIT 1",
+                (f"%\\_{raw_id}",),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
 
 def get_jobs_by_status(

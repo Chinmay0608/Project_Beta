@@ -453,6 +453,47 @@ def hide_job(
     dismiss_job(job_id=job_id, db_path=db_path)
 
 
+@app.command("restore")
+def restore_job(
+    job_id: str = typer.Argument(
+        ...,
+        help="Job ID to restore back to NEW (numeric ID from table or unique job key).",
+    ),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+) -> None:
+    """Restore a dismissed or applied job back to NEW status."""
+    init_db(db_path)
+    job = get_job_by_id(job_id, db_path=db_path)
+    if not job:
+        console.print(f"[bold red]Error:[/bold red] Job with ID [yellow]'{job_id}'[/yellow] not found in database.")
+        raise typer.Exit(code=1)
+
+    mark_job_status(job_id=job_id, status="NEW", db_path=db_path)
+    disp_id = job.get("numeric_id") or job_id
+    console.print(
+        f"[bold green][+][/bold green] Restored job [bold cyan]#{disp_id}[/bold cyan] "
+        f"([bold white]{job['company']}[/bold white] - [cyan]{job['title']}[/cyan]) to [bold green]NEW[/bold green]. "
+        "It will appear in scans and default listings again."
+    )
+
+
+@app.command("undismiss")
+def undismiss_job(
+    job_id: str = typer.Argument(..., help="Job ID to undismiss (revert back to NEW)."),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+) -> None:
+    """Alias for restore command: restore a dismissed job back to NEW status."""
+    restore_job(job_id=job_id, db_path=db_path)
+
+
 @app.command("bot")
 def bot_command(
     token: Optional[str] = typer.Option(

@@ -192,6 +192,20 @@ def test_cli_dismiss_and_hide_commands(tmp_path: Path, sample_jobs: list[JobPost
     updated2 = get_job_by_id(job2["numeric_id"], db_path=test_db)
     assert updated2["status"] == "DISMISSED"
 
+    # 3. Restore command reverts DISMISSED back to NEW
+    res3 = runner.invoke(app, ["restore", str(job1["numeric_id"]), "--db", str(test_db)])
+    assert res3.exit_code == 0
+    assert "NEW" in res3.output
+    restored1 = get_job_by_id(job1["numeric_id"], db_path=test_db)
+    assert restored1["status"] == "NEW"
+
+    # 4. Undismiss alias command reverts DISMISSED back to NEW
+    res4 = runner.invoke(app, ["undismiss", str(job2["numeric_id"]), "--db", str(test_db)])
+    assert res4.exit_code == 0
+    assert "NEW" in res4.output
+    restored2 = get_job_by_id(job2["numeric_id"], db_path=test_db)
+    assert restored2["status"] == "NEW"
+
 
 def test_scan_ignores_applied_and_dismissed_jobs_by_default(tmp_path: Path, sample_jobs: list[JobPosting]) -> None:
     """Verify CLI 'scan' automatically filters out already APPLIED and DISMISSED jobs."""

@@ -15,16 +15,44 @@ import httpx
 load_dotenv()
 
 from gcc_job_radar.config import COMPANIES
-from gcc_job_radar.db import get_stats, query_jobs, record_jobs
+from gcc_job_radar.db import (
+    find_jobs_by_selector,
+    get_stats,
+    mark_job_status,
+    query_jobs,
+    record_jobs,
+)
 from gcc_job_radar.engine import scan_all_companies
-from gcc_job_radar.models import JobPosting
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_print(text: str, file: Any = None) -> None:
+    """Print text safely, replacing unencodable characters on Windows cp1252/cp437 console."""
+    target = file or sys.stdout
+    try:
+        print(text, file=target)
+    except UnicodeEncodeError:
+        encoding = getattr(target, "encoding", "ascii") or "ascii"
+        sanitized = text.encode(encoding, errors="replace").decode(encoding)
+        print(sanitized, file=target)
+
 SYSTEM_PROMPT = (
-    "You are the GCC Job Radar AI Assistant. You help candidates discover verified "
-    "entry-level engineering, software, and tech roles at foreign GCCs and enterprise tech hubs in India. "
-    "Use your tools to query the local database, inspect the company directory, or run real-time company checks.\n\n"
+    "You are the GCC Job Radar AI Assistant. You help candidates discover and evaluate verified "
+    "entry-level engineering, software, and tech roles at foreign GCCs (Global Capability Centers) and enterprise tech hubs in India.\n\n"
+    "CRITICAL GUIDELINES ON TOOL INVOCATION:\n"
+    "- NEVER invoke tools (`check_company_live` or `query_jobs`) for compensation, CTC, salary inquiries, interview advice, resume tips, or general role comparisons. ATS endpoints do NOT contain Indian CTC/compensation figures. Triggering live scans for salary questions is useless and causes network delays.\n"
+    "- ONLY invoke `check_company_live` when the user explicitly requests to scan, check, or refresh active openings at a specific company (e.g. 'check Databricks live', 'scan Celonis').\n"
+    "- ONLY invoke `query_jobs` when the user is explicitly searching for open job listings in the database by title, keyword, city, or company (e.g. 'find python roles in Bangalore').\n"
+    "- Use `get_applied_jobs` whenever the user asks for their applied jobs, application history, applied sheet, applied list, or asks 'where are the rest of my applications'. ALWAYS invoke `get_applied_jobs` to retrieve the authentic list of applied jobs from the database instead of guessing from recent chat context.\n"
+    "- Use `manage_job_status` when the user asks to dismiss, hide, apply, mark as applied, or restore/undismiss jobs by ID number (e.g. 'dismiss job 1 and 4') or company name (e.g. 'dismiss Devmani Traders', 'mark BT Group as applied', 'restore job 2', 'applied to uipath, celonis').\n\n"
+    "DOMAIN KNOWLEDGE FOR COMPENSATION & CTC QUERIES IN INDIA:\n"
+    "- When asked about compensation, CTC, or salary thresholds (e.g. 'which role offers CTC over 12 lakhs?'):\n"
+    "  • Foreign GCCs & Enterprise Tech Hubs (e.g. BT Group, Google, Microsoft, Morgan Stanley, Snowflake, Databricks, Celonis, Cisco, Walmart): Entry-level Associate / Graduate Engineers typically receive ₹11 – 24+ LPA (readily crossing ₹12 LPA).\n"
+    "  • Telecom / IT Service MNCs (e.g. Ericsson, Nokia, TCS, Infosys, Wipro, Cognizant): Entry-level Associate Engineers / Graduate Trainees typically receive ₹3.5 – 6.5 LPA (rarely exceeding ₹7 LPA).\n"
+    "  • Early-Stage Agencies / Staffing Portals (e.g. Talentd, NexisGrow aggregators): Placements typically fall in the ₹3 – 6 LPA range.\n"
+    "  • Boutique Traders / Small Unverified Shops (e.g. Devmani Traders): Internships typically offer modest stipends (₹10k – 25k/month), far below high-tier CTCs.\n"
+    "- Deliver an immediate, clear, direct, and well-reasoned comparative verdict with specific CTC estimates without running live scans.\n\n"
     "CRITICAL FORMATTING GUIDELINES FOR TELEGRAM:\n"
     "- NEVER use markdown tables (no '| ... |' format). Telegram cannot render tables and they look broken and unreadable on mobile screens.\n"
     "- When presenting jobs, ALWAYS present each job as a clean, structured card with emojis and markdown links:\n"
@@ -43,20 +71,31 @@ GEMINI_TOOLS = [
         "function_declarations": [
             {
                 "name": "query_jobs",
-                "description": "Query the database of verified entry-level GCC tech jobs in India by title keyword, location, or company.",
+                "description": "Query the database of verified entry-level GCC tech jobs in India by title keyword, location, company, or status. ONLY use when searching for job postings. NEVER use for salary, CTC, or general questions.",
                 "parameters": {
                     "type": "OBJECT",
                     "properties": {
                         "title_keyword": {"type": "STRING", "description": "Role or skill keyword (e.g. software, python, intern, backend)"},
                         "location": {"type": "STRING", "description": "City or region in India (e.g. Bangalore, Hyderabad, Pune)"},
                         "company": {"type": "STRING", "description": "Company name (e.g. Celonis, Snowflake, Databricks)"},
+                        "status": {"type": "STRING", "description": "Job status filter: 'NEW' (default for open listings), 'APPLIED' (roles user has applied to), 'DISMISSED', or 'ALL'"},
                         "limit": {"type": "INTEGER", "description": "Max results to return (default 5)"},
                     },
                 },
             },
             {
+                "name": "get_applied_jobs",
+                "description": "Retrieve all job postings that the user has marked as APPLIED in the tracker database. ALWAYS use when the user asks for their applied jobs, application history, applied sheet, applied list, or asks what roles they applied to.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "limit": {"type": "INTEGER", "description": "Max results to return (default 50)"},
+                    },
+                },
+            },
+            {
                 "name": "check_company_live",
-                "description": "Trigger an immediate real-time live scan of a specific GCC company's career portal for entry-level positions.",
+                "description": "Trigger an immediate real-time live scan of a specific GCC company's career portal for open positions. ONLY use when the user explicitly requests a live scan or asks for active vacancies at a company. NEVER use for salary, CTC, or role comparisons.",
                 "parameters": {
                     "type": "OBJECT",
                     "properties": {
@@ -81,6 +120,19 @@ GEMINI_TOOLS = [
                     "properties": {},
                 },
             },
+            {
+                "name": "manage_job_status",
+                "description": "Update the status of tracked jobs in the database (mark as 'apply', 'dismiss', or 'restore' back to NEW). Accepts numeric job IDs (e.g. '1', '1, 2, 4'), unique IDs, or company names (e.g. 'Devmani Traders', 'BT Group', 'uipath, celonis').",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "action": {"type": "STRING", "description": "Action to perform: 'apply', 'dismiss', or 'restore'"},
+                        "target": {"type": "STRING", "description": "Job ID number(s) or company name(s) to target (e.g. '1', '1, 2, 4', 'Devmani Traders', 'uipath, celonis')"},
+                        "notes": {"type": "STRING", "description": "Optional notes when marking as applied (e.g. 'Applied via official ATS')"},
+                    },
+                    "required": ["action", "target"],
+                },
+            },
         ]
     }
 ]
@@ -90,13 +142,14 @@ OPENAI_TOOLS = [
         "type": "function",
         "function": {
             "name": "query_jobs",
-            "description": "Query the database of verified entry-level GCC tech jobs in India by title keyword, location, or company.",
+            "description": "Query the database of verified entry-level GCC tech jobs in India by title keyword, location, company, or status. ONLY use when searching for job postings. NEVER use for salary, CTC, or general questions.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title_keyword": {"type": "string", "description": "Role or skill keyword (e.g. software, python, intern, backend)"},
                     "location": {"type": "string", "description": "City or region in India (e.g. Bangalore, Hyderabad, Pune)"},
                     "company": {"type": "string", "description": "Company name (e.g. Celonis, Snowflake, Databricks)"},
+                    "status": {"type": "string", "description": "Job status filter: 'NEW' (default for open listings), 'APPLIED' (roles user has applied to), 'DISMISSED', or 'ALL'"},
                     "limit": {"type": "integer", "description": "Max results to return (default 5)"},
                 },
             },
@@ -105,8 +158,21 @@ OPENAI_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_applied_jobs",
+            "description": "Retrieve all job postings that the user has marked as APPLIED in the tracker database. ALWAYS use when the user asks for their applied jobs, application history, applied sheet, applied list, or asks what roles they applied to.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Max results to return (default 50)"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "check_company_live",
-            "description": "Trigger an immediate real-time live scan of a specific GCC company's career portal for entry-level positions.",
+            "description": "Trigger an immediate real-time live scan of a specific GCC company's career portal for open positions. ONLY use when the user explicitly requests a live scan or asks for active vacancies at a company. NEVER use for salary, CTC, or role comparisons.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -135,6 +201,22 @@ OPENAI_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_job_status",
+            "description": "Update the status of tracked jobs in the database (mark as 'apply', 'dismiss', or 'restore' back to NEW). Accepts numeric job IDs (e.g. '1', '1, 2, 4'), unique IDs, or company names (e.g. 'Devmani Traders', 'BT Group', 'uipath, celonis').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "Action to perform: 'apply', 'dismiss', or 'restore'"},
+                    "target": {"type": "string", "description": "Job ID number(s) or company name(s) to target (e.g. '1', '1, 2, 4', 'Devmani Traders', 'uipath, celonis')"},
+                    "notes": {"type": "string", "description": "Optional notes when marking as applied (e.g. 'Applied via official ATS')"},
+                },
+                "required": ["action", "target"],
             },
         },
     },
@@ -193,15 +275,39 @@ async def execute_tool(
         title_keyword = args.get("title_keyword")
         location = args.get("location")
         company = args.get("company")
+        status = args.get("status", "NEW")
         limit = int(args.get("limit", 5))
         jobs = query_jobs(
             title_keyword=title_keyword,
             location=location,
             company=company,
+            status=status,
             limit=limit,
             db_path=db_path,
         )
         return {"status": "success", "count": len(jobs), "jobs": jobs}
+
+    elif name == "get_applied_jobs":
+        limit = int(args.get("limit", 50))
+        from gcc_job_radar.db import get_jobs_by_status
+        from gcc_job_radar.link_resolver import resolve_effective_apply_url
+
+        jobs = get_jobs_by_status("APPLIED", limit=limit, db_path=db_path)
+        formatted_jobs = []
+        for j in jobs:
+            eff_url, _, label = resolve_effective_apply_url(j)
+            formatted_jobs.append({
+                "id": j.get("numeric_id") or j.get("id"),
+                "company": j.get("company", "Unknown"),
+                "title": j.get("title", "Role"),
+                "location": j.get("location", ""),
+                "status": "APPLIED",
+                "applied_at": j.get("applied_at"),
+                "notes": j.get("notes"),
+                "apply_url": eff_url,
+                "published_date": j.get("published_date") or "Active",
+            })
+        return {"status": "success", "count": len(formatted_jobs), "jobs": formatted_jobs}
 
     elif name == "check_company_live":
         company_name = args.get("company_name", "").strip()
@@ -243,6 +349,47 @@ async def execute_tool(
     elif name == "get_configured_companies":
         comps = get_configured_companies()
         return {"status": "success", "count": len(comps), "companies": comps}
+
+    elif name == "manage_job_status":
+        action = str(args.get("action", "")).lower().strip()
+        target = str(args.get("target", "")).strip()
+        notes = args.get("notes")
+
+        jobs = find_jobs_by_selector(target, db_path=db_path)
+        if not jobs:
+            return {
+                "status": "not_found",
+                "action": action,
+                "message": f"No jobs found matching '{target}'.",
+                "jobs": [],
+            }
+
+        target_status = "APPLIED" if action == "apply" else ("DISMISSED" if action in ("dismiss", "hide") else "NEW")
+        updated_jobs = []
+        for j in jobs:
+            rowid = j.get("numeric_id") or j.get("id")
+            mark_job_status(
+                job_id=rowid,
+                status=target_status,
+                notes=notes if target_status == "APPLIED" else None,
+                db_path=db_path,
+            )
+            updated_jobs.append({
+                "id": rowid,
+                "company": j.get("company", "Unknown"),
+                "title": j.get("title", "Role"),
+                "status": target_status,
+                "apply_url": str(j.get("direct_search_url") or j.get("apply_url") or ""),
+            })
+
+        return {
+            "status": "success",
+            "action": action,
+            "target_status": target_status,
+            "count": len(updated_jobs),
+            "jobs": updated_jobs,
+            "notes": notes,
+        }
 
     return {"status": "error", "message": f"Unknown tool '{name}'"}
 
@@ -372,7 +519,8 @@ def format_jobs_html(jobs: list[dict[str, Any]], title: str) -> str:
     if not jobs:
         return f"ℹ️ <b>{html.escape(title)}</b>\n\nNo matching entry-level roles found."
 
-    msg = f"🚀 <b>{html.escape(title)} ({len(jobs)})</b>\n\n"
+    count_suffix = "" if f"({len(jobs)})" in title else f" ({len(jobs)})"
+    msg = f"🚀 <b>{html.escape(title)}{count_suffix}</b>\n\n"
     for idx, item in enumerate(jobs, start=1):
         company = item.get("company", "")
         pos_title = item.get("title", "")
@@ -391,6 +539,47 @@ def format_jobs_html(jobs: list[dict[str, Any]], title: str) -> str:
 
 def format_tool_result_summary(name: str, result: dict[str, Any]) -> str:
     """Format tool result as clean readable HTML rather than raw JSON."""
+    if name == "manage_job_status":
+        action = result.get("action", "").lower()
+        jobs = result.get("jobs", [])
+        if not jobs:
+            return f"⚠️ {html.escape(result.get('message', 'No matching jobs found.'))}"
+
+        if action == "apply":
+            emoji = "✅"
+            header = f"{emoji} <b>Marked as APPLIED ({len(jobs)}):</b>\n\n"
+        elif action in ("dismiss", "hide"):
+            emoji = "🗑️"
+            header = f"{emoji} <b>Dismissed {len(jobs)} Job(s):</b>\n\n"
+        else:
+            emoji = "🔄"
+            header = f"{emoji} <b>Restored {len(jobs)} Job(s) to NEW:</b>\n\n"
+
+        items = []
+        for j in jobs:
+            link = (
+                f' • <a href="{html.escape(str(j.get("apply_url")))}">Apply Link</a>'
+                if j.get("apply_url")
+                else ""
+            )
+            items.append(
+                f"• <b>#{j.get('id')}. {html.escape(j.get('company', 'Unknown'))}</b> — {html.escape(j.get('title', 'Role'))}{link}"
+            )
+
+        notes = result.get("notes")
+        notes_str = f"\n\n📝 <b>Notes:</b> <i>{html.escape(notes)}</i>" if notes else ""
+        return (header + "\n".join(items) + notes_str).strip()
+
+    if name == "get_applied_jobs":
+        jobs = result.get("jobs", [])
+        if not jobs:
+            return (
+                "ℹ️ <b>No Applied Roles Recorded</b>\n\n"
+                "You haven't marked any roles as applied yet in the tracker database.\n"
+                "Use <code>/apply &lt;id or company&gt;</code> to track your applications!"
+            )
+        return format_jobs_html(jobs, f"Your Applied Listings ({len(jobs)})")
+
     if "jobs" in result:
         return format_jobs_html(result["jobs"], f"Results for {name}")
     if "companies" in result:
@@ -424,6 +613,66 @@ async def _fallback_response(
 ) -> str:
     """Rule-based natural language parsing and intent matching when no LLM key is configured."""
     q = query.lower().strip()
+
+    # 0a. Query applied jobs intent (e.g. "pull out the applied sheet", "applied list", "show applied roles", "where are rest")
+    is_applied_query = (
+        q in ("applied", "applications", "applied list", "applied sheet", "my applications")
+        or any(phrase in q for phrase in [
+            "applied sheet", "applied list", "applied jobs", "applied roles",
+            "show applied", "view applied", "my applications", "roles applied",
+            "what did i apply", "where are rest", "where are the rest", "applications list"
+        ])
+    )
+    if is_applied_query:
+        res = await execute_tool("get_applied_jobs", {}, db_path=db_path)
+        jobs = res.get("jobs", [])
+        if not jobs:
+            return (
+                "ℹ️ <b>No Applied Roles Recorded</b>\n\n"
+                "You haven't marked any roles as applied yet in the tracker database.\n"
+                "Use <code>/apply &lt;id or company&gt;</code> or tell me which roles you applied to!"
+            )
+        return format_jobs_html(jobs, f"Your Applied Listings ({len(jobs)})")
+
+    # 0b. Job status management intent (dismiss, apply, restore)
+    action_match = None
+    target_match = None
+
+    # Check for "mark <target> as applied"
+    m_mark = re.match(r"^mark(?:ed)?\s+(.+?)\s+as\s+applied\b", q)
+    if m_mark:
+        action_match = "apply"
+        target_match = query[m_mark.start(1) : m_mark.end(1)].strip()
+    else:
+        for verb, act in [
+            ("applied to", "apply"),
+            ("apply to", "apply"),
+            ("mark applied", "apply"),
+            ("applied", "apply"),
+            ("apply", "apply"),
+            ("dismiss", "dismiss"),
+            ("hide", "dismiss"),
+            ("restore", "restore"),
+            ("undismiss", "restore"),
+        ]:
+            if q.startswith(verb + " "):
+                action_match = act
+                target_match = query[len(verb) :].strip()
+                break
+
+    if action_match and target_match:
+        notes = None
+        m_note = re.search(r"(?:-n|--notes|notes?:)\s+(.+)$", target_match, flags=re.IGNORECASE)
+        if m_note:
+            notes = m_note.group(1).strip().strip('"').strip("'")
+            target_match = target_match[: m_note.start()].strip()
+
+        res = await execute_tool(
+            "manage_job_status",
+            {"action": action_match, "target": target_match, "notes": notes},
+            db_path=db_path,
+        )
+        return format_tool_result_summary("manage_job_status", res)
 
     # 1. Greetings & capabilities
     if any(q.startswith(g) or q == g for g in ["hi", "hello", "hey", "who are you", "what can you do", "help"]):
@@ -584,18 +833,18 @@ async def _call_gemini(
     last_tool_name = ""
     last_tool_result: dict[str, Any] = {}
 
-    for _ in range(5):
+    for _ in range(3):
         try:
-            resp = await client.post(url, json=payload, timeout=15.0)
+            resp = await client.post(url, json=payload, timeout=12.0)
         except Exception as exc:
             err_msg = f"[AI Agent Error] Gemini request failed (connection/timeout): {exc}"
-            print(err_msg, file=sys.stderr)
+            _safe_print(err_msg, file=sys.stderr)
             logger.error(err_msg)
             break
 
         if resp.status_code != 200:
             err_msg = f"[AI Agent Error] Gemini API error (HTTP {resp.status_code}): {resp.text}"
-            print(err_msg, file=sys.stderr)
+            _safe_print(err_msg, file=sys.stderr)
             logger.error(err_msg)
             break
 
@@ -603,7 +852,7 @@ async def _call_gemini(
         candidates = data.get("candidates", [])
         if not candidates:
             err_msg = f"[AI Agent Error] Gemini API returned no candidates: {data}"
-            print(err_msg, file=sys.stderr)
+            _safe_print(err_msg, file=sys.stderr)
             logger.error(err_msg)
             break
 
@@ -617,7 +866,7 @@ async def _call_gemini(
             if text:
                 return markdown_to_telegram_html(text)
             err_msg = f"[AI Agent Error] Gemini candidate had no text and no functionCall: {parts}"
-            print(err_msg, file=sys.stderr)
+            _safe_print(err_msg, file=sys.stderr)
             logger.error(err_msg)
             break
 
@@ -679,18 +928,18 @@ async def _call_openai_compatible(
     last_tool_name = ""
     last_tool_result: dict[str, Any] = {}
 
-    for _ in range(5):
+    for _ in range(3):
         try:
-            resp = await client.post(url, json=payload, headers=headers, timeout=30.0)
+            resp = await client.post(url, json=payload, headers=headers, timeout=15.0)
         except Exception as exc:
             err_msg = f"[AI Agent Error] {provider_name} request failed (connection/timeout): {exc}"
-            print(err_msg, file=sys.stderr)
+            _safe_print(err_msg, file=sys.stderr)
             logger.error(err_msg)
             return None
 
         if resp.status_code != 200:
             err_msg = f"[AI Agent Error] {provider_name} API error (HTTP {resp.status_code}): {resp.text}"
-            print(err_msg, file=sys.stderr)
+            _safe_print(err_msg, file=sys.stderr)
             logger.error(err_msg)
             return None
 
@@ -704,7 +953,7 @@ async def _call_openai_compatible(
             if text:
                 return markdown_to_telegram_html(text)
             err_msg = f"[AI Agent Error] {provider_name} response had no content and no tool_calls: {msg}"
-            print(err_msg, file=sys.stderr)
+            _safe_print(err_msg, file=sys.stderr)
             logger.error(err_msg)
             return None
 
@@ -743,7 +992,7 @@ async def _call_groq(
 ) -> Optional[str]:
     """Call Groq REST API using high-performance open models (e.g. openai/gpt-oss-120b)."""
     base_url = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
-    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     return await _call_openai_compatible(
         prompt=prompt,
         history=history,
@@ -810,10 +1059,10 @@ async def ask_ai_agent(
         detected.append("OpenAI")
 
     if detected:
-        print(f"[AI Agent] Available LLM providers: {', '.join(detected)} for prompt: '{prompt}'")
+        _safe_print(f"[AI Agent] Available LLM providers: {', '.join(detected)} for prompt: '{prompt}'")
         logger.info("Available LLM providers: %s", ", ".join(detected))
     else:
-        print(f"[AI Agent] Neither GEMINI_API_KEY nor GROQ_API_KEY nor OPENAI_API_KEY detected (using rule-based fallback) for prompt: '{prompt}'")
+        _safe_print(f"[AI Agent] Neither GEMINI_API_KEY nor GROQ_API_KEY nor OPENAI_API_KEY detected (using rule-based fallback) for prompt: '{prompt}'")
         logger.info("No LLM keys detected; using rule-based fallback")
 
     own_client = False
@@ -828,47 +1077,47 @@ async def ask_ai_agent(
 
         if primary_pref == "groq" and groq_key:
             # 1. Primary: Groq (ultra-fast ~2s LPU inference)
-            print(f"[AI Agent] Attempting primary provider: Groq...")
+            _safe_print("[AI Agent] Attempting primary provider: Groq...")
             response = await _call_groq(prompt, history, groq_key, client, db_path=db_path)
 
             # 2. Smart shift to Gemini if Groq failed
             if not response and gemini_key:
-                print(f"[AI Agent] [Shift] Smart shifting to Gemini (Groq unavailable or failed)...")
+                _safe_print("[AI Agent] [Shift] Smart shifting to Gemini (Groq unavailable or failed)...")
                 logger.info("Smart shifting to Gemini")
                 response = await _call_gemini(prompt, history, gemini_key, client, db_path=db_path)
 
             # 3. Tertiary: OpenAI
             if not response and openai_key:
-                print(f"[AI Agent] [Shift] Shifting to OpenAI provider...")
+                _safe_print("[AI Agent] [Shift] Shifting to OpenAI provider...")
                 logger.info("Shifting to OpenAI provider")
                 response = await _call_openai(prompt, history, openai_key, client, db_path=db_path)
         else:
             # Default primary: Gemini (with fast gemini-3.1-flash-lite and smart shifting)
             # 1. Primary: Gemini
             if gemini_key:
-                print(f"[AI Agent] Attempting primary provider: Gemini...")
+                _safe_print("[AI Agent] Attempting primary provider: Gemini...")
                 response = await _call_gemini(prompt, history, gemini_key, client, db_path=db_path)
 
             # 2. Smart shift to Groq if Gemini failed or was unconfigured
             if not response and groq_key:
                 if gemini_key:
-                    print(f"[AI Agent] [Shift] Smart shifting to Groq (Gemini unavailable or failed)...")
+                    _safe_print("[AI Agent] [Shift] Smart shifting to Groq (Gemini unavailable or failed)...")
                     logger.info("Smart shifting to Groq")
                 else:
-                    print(f"[AI Agent] Attempting provider: Groq...")
+                    _safe_print("[AI Agent] Attempting provider: Groq...")
                     logger.info("Attempting provider: Groq")
                 response = await _call_groq(prompt, history, groq_key, client, db_path=db_path)
 
             # 3. Tertiary: OpenAI
             if not response and openai_key:
-                print(f"[AI Agent] [Shift] Shifting to OpenAI provider...")
+                _safe_print("[AI Agent] [Shift] Shifting to OpenAI provider...")
                 logger.info("Shifting to OpenAI provider")
                 response = await _call_openai(prompt, history, openai_key, client, db_path=db_path)
 
         # 4. Final: Deterministic NLP fallback
         if not response:
             if detected:
-                print(f"[AI Agent] [Notice] All configured LLMs failed; falling back to rule-based NLP engine")
+                _safe_print("[AI Agent] [Notice] All configured LLMs failed; falling back to rule-based NLP engine")
                 logger.warning("All LLMs failed; falling back to rule-based engine")
             response = await _fallback_response(prompt, db_path=db_path)
 
@@ -879,7 +1128,7 @@ async def ask_ai_agent(
 
     except Exception as exc:
         err_msg = f"[AI Agent Error] Exception during ask_ai_agent: {exc}"
-        print(err_msg, file=sys.stderr)
+        _safe_print(err_msg, file=sys.stderr)
         logger.error(err_msg)
         return await _fallback_response(prompt, db_path=db_path)
 

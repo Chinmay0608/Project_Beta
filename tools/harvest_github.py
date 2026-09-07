@@ -15,13 +15,11 @@ import argparse
 import asyncio
 from dataclasses import dataclass
 from html.parser import HTMLParser
-import json
 import logging
 from pathlib import Path
 import re
 import sys
 from typing import Optional
-from urllib.parse import urlparse
 
 import httpx
 

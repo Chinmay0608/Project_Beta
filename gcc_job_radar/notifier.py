@@ -3,10 +3,11 @@
 import html
 import logging
 import os
-from typing import Optional
+from typing import Any, Optional
 import httpx
 from rich.console import Console
 
+from gcc_job_radar.link_resolver import resolve_effective_apply_url
 from gcc_job_radar.models import JobPosting
 
 logger = logging.getLogger(__name__)
@@ -32,9 +33,10 @@ async def send_discord_notification(
         embeds = []
 
         for job in chunk:
+            effective_url, _, label = resolve_effective_apply_url(job)
             embed = {
                 "title": f"🚀 {job.company} - {job.title}",
-                "url": str(job.apply_url),
+                "url": str(effective_url),
                 "color": DISCORD_EMBED_COLOR,
                 "fields": [
                     {"name": "🏢 Company", "value": job.company, "inline": True},
@@ -44,7 +46,7 @@ async def send_discord_notification(
                     {"name": "📅 Date", "value": job.published_date or "Active", "inline": True},
                     {
                         "name": "🔗 Apply Link",
-                        "value": f"[Apply on ATS]({job.apply_url})",
+                        "value": f"[{label}]({effective_url})",
                         "inline": False,
                     },
                 ],
@@ -71,14 +73,113 @@ async def send_discord_notification(
     return success
 
 
+def build_job_inline_keyboard(job: JobPosting | dict[str, Any]) -> dict[str, Any]:
+    """Build Telegram InlineKeyboardMarkup for an individual job posting card.
+
+    Requirements:
+    - Button 1 (URL): "Apply" pointing to apply_url.
+    - Button 2 (URL, conditional): If status is 'NEEDS_RESOLVE' or direct_search_url is present,
+      add "Search Direct ATS" pointing to direct_search_url.
+    - Button 3 (Callback): "Dismiss" (callback_data="dismiss:{job_id}").
+    - Button 4 (Callback): "Applied" (callback_data="applied:{job_id}").
+    """
+    if isinstance(job, JobPosting):
+        job_id = job.numeric_id if job.numeric_id is not None else job.id
+        effective_url, _, _ = resolve_effective_apply_url(job)
+        apply_url = str(effective_url) if effective_url else str(job.apply_url)
+        direct_search_url = str(job.direct_search_url) if job.direct_search_url else None
+        status = getattr(job, "status", "NEW")
+    else:
+        job_id = job.get("numeric_id") if job.get("numeric_id") is not None else job.get("id", "")
+        effective_url, _, _ = resolve_effective_apply_url(job)
+        apply_url = str(effective_url) if effective_url else str(job.get("apply_url", ""))
+        direct_search_url = str(job.get("direct_search_url")) if job.get("direct_search_url") else None
+        status = job.get("status", "NEW")
+
+    # Row 1: URL Navigation Buttons
+    row_1: list[dict[str, str]] = [{"text": "Apply", "url": apply_url}]
+    if (status == "NEEDS_RESOLVE" or direct_search_url) and direct_search_url:
+        row_1.append({"text": "Search Direct ATS", "url": direct_search_url})
+
+    # Row 2: Interactive Callback Buttons
+    row_2: list[dict[str, str]] = [
+        {"text": "Dismiss", "callback_data": f"dismiss:{job_id}"},
+        {"text": "Applied", "callback_data": f"applied:{job_id}"},
+    ]
+
+    return {
+        "inline_keyboard": [row_1, row_2]
+    }
+
+
+def format_job_card_html(job: JobPosting | dict[str, Any]) -> str:
+    """Format an individual job posting card for Telegram alert."""
+    if isinstance(job, JobPosting):
+        company = job.company
+        pos_title = job.title
+        location = job.location
+        ats = job.provider.value.upper()
+        date = job.published_date or "Active"
+    else:
+        company = job.get("company", "Unknown")
+        pos_title = job.get("title", "Role")
+        location = job.get("location", "India")
+        prov = job.get("provider", "")
+        ats = getattr(prov, "value", str(prov)).upper()
+        date = job.get("published_date") or "Active"
+
+    effective_url, _, label = resolve_effective_apply_url(job)
+    return (
+        f"🚀 <b>{html.escape(company)}</b>\n"
+        f"💼 {html.escape(pos_title)}\n"
+        f"📍 {html.escape(location)} ({ats}) • 📅 {html.escape(date)}\n"
+        f"🔗 <a href=\"{html.escape(str(effective_url))}\">{html.escape(label)}</a>"
+    )
+
+
+async def send_telegram_job_card(
+    bot_token: str,
+    chat_id: str | int,
+    job: JobPosting | dict[str, Any],
+    client: httpx.AsyncClient,
+) -> bool:
+    """Send an individual interactive job card with InlineKeyboardMarkup."""
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": str(chat_id),
+        "text": format_job_card_html(job),
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+        "reply_markup": build_job_inline_keyboard(job),
+    }
+    try:
+        resp = await client.post(url, json=payload, timeout=10.0)
+        return resp.status_code == 200
+    except Exception as exc:
+        logger.warning("Failed to send Telegram job card: %s", exc)
+        return False
+
+
 async def send_telegram_notification(
-    bot_token: str, chat_id: str, new_jobs: list[JobPosting], client: httpx.AsyncClient
+    bot_token: str,
+    chat_id: str,
+    new_jobs: list[JobPosting],
+    client: httpx.AsyncClient,
+    send_as_cards: bool = False,
 ) -> bool:
     """Send formatted Telegram message via Bot API for newly detected postings."""
     bot_token = bot_token.strip() if bot_token else ""
     chat_id = chat_id.strip() if chat_id else ""
     if not bot_token or not chat_id or not new_jobs:
         return False
+
+    if send_as_cards:
+        all_ok = True
+        for job in new_jobs:
+            ok = await send_telegram_job_card(bot_token, chat_id, job, client)
+            if not ok:
+                all_ok = False
+        return all_ok
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     success = True
@@ -91,13 +192,13 @@ async def send_telegram_notification(
         clean_company = html.escape(job.company)
         clean_title = html.escape(job.title)
         clean_location = html.escape(job.location)
-        apply_url_str = str(job.apply_url)
+        effective_url, _, label = resolve_effective_apply_url(job)
 
         item = (
             f"<b>{idx}. {clean_company}</b>\n"
             f"💼 {clean_title}\n"
             f"📍 {clean_location} ({job.provider.value.upper()})\n"
-            f"🔗 <a href=\"{apply_url_str}\">Apply on ATS</a>\n"
+            f"🔗 <a href=\"{html.escape(effective_url)}\">{html.escape(label)}</a>\n"
         )
         items_text.append(item)
 
@@ -115,13 +216,35 @@ async def send_telegram_notification(
     if current_chunk:
         message_chunks.append(current_chunk)
 
+    # Build interactive inline keyboard
+    reply_markup: Optional[dict[str, Any]] = None
+    if len(new_jobs) == 1:
+        reply_markup = build_job_inline_keyboard(new_jobs[0])
+    elif len(new_jobs) <= 8:
+        # Multi-job compact inline keyboard
+        keyboard_rows = []
+        for idx, job in enumerate(new_jobs, start=1):
+            job_id = job.numeric_id if job.numeric_id is not None else job.id
+            effective_url, _, _ = resolve_effective_apply_url(job)
+            apply_url = str(effective_url) if effective_url else str(job.apply_url)
+            row = [
+                {"text": f"Apply #{idx}", "url": apply_url},
+                {"text": f"Dismiss #{idx}", "callback_data": f"dismiss:{job_id}"},
+                {"text": f"Applied #{idx}", "callback_data": f"applied:{job_id}"},
+            ]
+            keyboard_rows.append(row)
+        reply_markup = {"inline_keyboard": keyboard_rows}
+
     for chunk in message_chunks:
-        payload = {
+        payload: dict[str, Any] = {
             "chat_id": chat_id,
             "text": chunk.strip(),
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
         }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+
         try:
             resp = await client.post(url, json=payload)
             if resp.status_code != 200:

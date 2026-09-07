@@ -18,7 +18,7 @@ from typing import Callable, Optional
 import httpx
 
 from gcc_job_radar.config import COMPANIES
-from gcc_job_radar.models import ATSProvider, CompanyConfig
+from gcc_job_radar.models import ATSProvider
 
 try:
     from rich.console import Console

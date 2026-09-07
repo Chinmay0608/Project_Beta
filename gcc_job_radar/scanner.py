@@ -17,15 +17,14 @@ from gcc_job_radar.clients.phenom_successfactors import PhenomSuccessFactorsClie
 from gcc_job_radar.clients.smartrecruiters import SmartRecruitersClient
 from gcc_job_radar.clients.workday import WorkdayClient
 from gcc_job_radar.config import COMPANIES
-from gcc_job_radar.filters import INDIA_LOCATION_KEYWORDS, is_potential_india_location, matches_india_location
 from gcc_job_radar.models import ATSProvider, CompanyConfig, JobPosting
 
 logger = logging.getLogger(__name__)
 
 try:
-    import h2  # noqa: F401
+    import h2
 
-    HAS_HTTP2 = True
+    HAS_HTTP2 = bool(h2)
 except ImportError:
     HAS_HTTP2 = False
 
@@ -131,7 +130,7 @@ class RetryTransport(httpx.AsyncBaseTransport):
                     self.retry_count += 1
                     retry_after = response.headers.get("Retry-After")
                     delay = self._calculate_delay(attempt, retry_after)
-                    logger.warning(
+                    logger.debug(
                         "Rate limited (HTTP 429) for %s. Retrying in %.2fs (attempt %d/%d)...",
                         request.url,
                         delay,
@@ -154,7 +153,7 @@ class RetryTransport(httpx.AsyncBaseTransport):
                     attempt += 1
                     self.retry_count += 1
                     delay = self._calculate_delay(attempt, None)
-                    logger.warning(
+                    logger.debug(
                         "Transient connection error (%s) for %s. Retrying in %.2fs (attempt %d/%d)...",
                         type(exc).__name__,
                         request.url,
@@ -230,7 +229,12 @@ async def scan_all_companies(
 
     close_client = False
     if client is None:
-        base_transport = httpx.AsyncHTTPTransport(retries=0, http2=HAS_HTTP2)
+        limits = httpx.Limits(
+            max_connections=max(100, concurrency * 4),
+            max_keepalive_connections=max(40, concurrency * 2),
+            keepalive_expiry=30.0,
+        )
+        base_transport = httpx.AsyncHTTPTransport(retries=0, http2=HAS_HTTP2, limits=limits)
         transport = RetryTransport(
             base_transport,
             max_retries=max_retries,

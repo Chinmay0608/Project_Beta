@@ -1,5 +1,6 @@
 import html
 import re
+from typing import Optional
 from gcc_job_radar.config import (
     EXCLUDE_TITLE_PATTERN,
     INCLUDE_TITLE_PATTERN,
@@ -24,14 +25,75 @@ EXPERIENCE_DISQUALIFY_PATTERN: re.Pattern[str] = re.compile(
     re.VERBOSE | re.IGNORECASE,
 )
 
-_ENTRY_PREFIX_PATTERN = re.compile(r"(?i)[0-2]\s*(?:-|to)\s*$")
+# Explicit exclusion of past graduation batches when role restricts to earlier passouts (2020-2025 only)
+PAST_BATCH_EXCLUSION_PATTERN: re.Pattern[str] = re.compile(
+    r"""
+    (?ix)
+    \b(?:
+        (?:only\s+for\s+)?(?:202[0-5]|2025|2024|2023)\s*(?:batch|pass[- ]?outs?|graduates?)\s+only |
+        (?:202[0-5]|2025|2024|2023)\s*(?:batch|pass[- ]?outs?)\s+(?:only|eligible) |
+        batches?\s+(?:eligible\s*:\s*)?(?:202[0-5]|2024|2025)\b(?!\s*[,-/&]\s*2027) |
+        (?:must\s+have\s+)?graduated\s+in\s+(?:202[0-5]|2024|2025)\b |
+        (?:must\s+have\s+)?completed\s+(?:graduation|degree)\s+(?:in|by)\s+(?:202[0-5]|2024|2025)\b |
+        (?:candidates?\s+from\s+)?(?:202[0-5]|2024|2025)\s+(?:batch\s+only|passouts?\s+only)
+    )\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Positive eligibility pattern for Class of 2027 (Pre-final, Penultimate, Internships, 2027 Batch)
+STUDENT_2027_ELIGIBILITY_PATTERN: re.Pattern[str] = re.compile(
+    r"""
+    (?ix)
+    \b(?:
+        (?:class|batch|graduating(?:\s+year)?|pass[- ]?out)\s*(?:of|in)?\s*[:=-]?\s*2027\b |
+        2027\s*(?:batch|graduates?|pass[- ]?outs?|passouts?|cohort)\b |
+        pre[- ]?final\s+year\b |
+        penultimate\s+year\b |
+        (?:3rd|third)\s+year\s+(?:students?|undergrads?|engineering)\b |
+        summer\s+202[67]\s+(?:intern|internship)\b |
+        (?:2026|2027)\s+summer\s+intern\b |
+        (?:intern|internship|co[- ]?op|apprentice|trainee)\b
+    )\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Immediate full-time constraints that disqualify currently enrolled 2027 students
+IMMEDIATE_FULLTIME_JOIN_PATTERN: re.Pattern[str] = re.compile(
+    r"""
+    (?ix)
+    \b(?:
+        immediate\s+joiners?\s+(?:only|required|preferred) |
+        (?:must\s+be\s+available\s+to\s+join\s+immediately) |
+        (?:degree|graduation)\s+in\s+hand\s+required |
+        (?:must\s+already\s+have\s+completed\s+degree) |
+        (?:no\s+pursuing\s+students|not\s+for\s+currently\s+enrolled) |
+        (?:must\s+have\s+provisional\s+degree\s+certificate)
+    )\b
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+_ENTRY_PREFIX_PATTERN = re.compile(r"(?i)[0-2]\s*(?:-|to|–|—)\s*$")
 _HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+
+# Disqualify roles requiring fractional/ranged experience (>= 2.5 yrs) or mid-level ranges
+_EXPERIENCE_RANGE_PATTERN: re.Pattern[str] = re.compile(
+    r"(?i)\b(\d+(?:\.\d+)?)\s*(?:-|to|–|—)\s*(\d+(?:\.\d+)?)\s*(?:\+?\s*)?(?:years?|yoe|yrs?)\b"
+)
+_MIN_EXPERIENCE_PATTERN: re.Pattern[str] = re.compile(
+    r"(?i)\b(?:min|minimum|at\s+least)\s+(?:of\s+)?(\d+(?:\.\d+)?)\s*(?:\+?\s*)?(?:years?|yoe|yrs?)\b"
+)
+_PLUS_EXPERIENCE_PATTERN: re.Pattern[str] = re.compile(
+    r"(?i)\b(\d+(?:\.\d+)?)\s*\+\s*(?:years?|yoe|yrs?)\b"
+)
 
 
 def requires_experienced_candidate(content: str) -> bool:
-    """Check if job description demands experienced candidates (>= 3 years experience).
+    """Check if job description demands experienced candidates (>= 2.5 years experience).
 
-    Returns True if description indicates candidate must have >= 3 years experience.
+    Returns True if description indicates candidate must have >= 2.5 years experience.
     Genuine entry-level/fresher roles (0-1 yrs, 0-2 yrs, 1-3 yrs, degrees) return False.
     """
     if not content or not content.strip():
@@ -39,6 +101,41 @@ def requires_experienced_candidate(content: str) -> bool:
     unescaped = html.unescape(content)
     clean_text = _HTML_TAG_PATTERN.sub(" ", unescaped)
 
+    # 1. Check ranged experience patterns (e.g. "2.6 – 5 Years", "3 - 6 yrs", "2 - 4 years")
+    for m in _EXPERIENCE_RANGE_PATTERN.finditer(clean_text):
+        try:
+            min_y = float(m.group(1))
+            max_y = float(m.group(2))
+            if min_y >= 2.5:
+                return True
+            if min_y >= 2.0 and max_y >= 4.0:
+                return True
+        except (ValueError, TypeError):
+            pass
+
+    # 2. Check minimum experience patterns (e.g. "min 3 years", "at least 3 years", "minimum 4 years")
+    for m in _MIN_EXPERIENCE_PATTERN.finditer(clean_text):
+        try:
+            y = float(m.group(1))
+            if y >= 2.5:
+                return True
+        except (ValueError, TypeError):
+            pass
+
+    # 3. Check plus patterns (e.g. "3+ YOE", "3+ years", "2.5+ yrs")
+    for m in _PLUS_EXPERIENCE_PATTERN.finditer(clean_text):
+        try:
+            y = float(m.group(1))
+            if y >= 2.5:
+                start = m.start()
+                prefix = clean_text[max(0, start - 10):start]
+                if _ENTRY_PREFIX_PATTERN.search(prefix):
+                    continue
+                return True
+        except (ValueError, TypeError):
+            pass
+
+    # 4. Check existing comprehensive pattern
     for m in EXPERIENCE_DISQUALIFY_PATTERN.finditer(clean_text):
         start = m.start()
         prefix = clean_text[max(0, start - 10):start]
@@ -261,12 +358,17 @@ def matches_india_location(location: str) -> bool:
     return False
 
 
-def is_entry_level(job_or_title: object, content: str = "") -> bool:
+def is_entry_level(
+    job_or_title: object,
+    content: str = "",
+    target_grad_year: Optional[int] = None,
+) -> bool:
     """Check if a job role targets freshers / entry-level / 0-2 YOE candidates.
 
     High-recall matching for terms like 'Associate Software Engineer', 'Graduate
     Engineer Trainee', 'GET', 'SDE 1', 'SDE-1', 'Software Engineer 1', 'MTS 1',
     'Junior Software Engineer', 'Analyst', and 0-2 years of experience requirements.
+    When target_grad_year is specified (e.g. 2027), checks for batch and student constraints.
     """
     if isinstance(job_or_title, str):
         title = job_or_title
@@ -300,13 +402,23 @@ def is_entry_level(job_or_title: object, content: str = "") -> bool:
     if not title_matches:
         # If title is generic (e.g. "Software Engineer"), check if content explicitly specifies 0-2 YOE / freshers eligible
         if content and FRESHER_EXPERIENCE_PATTERN.search(content) and not requires_experienced_candidate(content):
-            return True
-        return False
+            title_matches = True
+        else:
+            return False
 
     # If title matches, verify content doesn't require experienced candidate (3+ years)
     if content and content.strip():
         if requires_experienced_candidate(content):
             return False
+
+        # If evaluating for a specific student graduation year (e.g. 2027)
+        if target_grad_year == 2027:
+            if PAST_BATCH_EXCLUSION_PATTERN.search(content):
+                return False
+            # If immediate fulltime degree in hand required and not an internship
+            is_intern = bool(re.search(r"(?i)\b(?:intern|internship|co[- ]?op|apprentice)\b", clean_title))
+            if not is_intern and IMMEDIATE_FULLTIME_JOIN_PATTERN.search(content):
+                return False
 
     return True
 

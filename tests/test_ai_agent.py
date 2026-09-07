@@ -223,6 +223,22 @@ async def test_execute_tool(tmp_path: Path, sample_jobs: list[JobPosting]) -> No
     assert comp_res["count"] > 0
     assert any(c["name"] == "Celonis" for c in comp_res["companies"])
 
+    # Test get_applied_jobs tool
+    from gcc_job_radar.db import mark_job_status
+    mark_job_status(1, "APPLIED", notes="Applied on Celonis", db_path=db_file)
+
+    app_res = await execute_tool("get_applied_jobs", {}, db_path=db_file)
+    assert app_res["status"] == "success"
+    assert app_res["count"] == 1
+    assert app_res["jobs"][0]["company"] == "Celonis"
+    assert app_res["jobs"][0]["status"] == "APPLIED"
+
+    # Test query_jobs with status="APPLIED"
+    q_applied = await execute_tool("query_jobs", {"status": "APPLIED"}, db_path=db_file)
+    assert q_applied["status"] == "success"
+    assert q_applied["count"] == 1
+    assert q_applied["jobs"][0]["company"] == "Celonis"
+
 
 
 # 5. Fallback Mode Tests (No API Keys Configured)

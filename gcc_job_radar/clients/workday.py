@@ -1,7 +1,6 @@
 """Workday ATS API client (CXS API)."""
 
 import logging
-import re
 from typing import Any
 import httpx
 import orjson

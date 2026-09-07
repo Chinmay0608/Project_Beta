@@ -8,7 +8,7 @@ companies from gcc_job_radar/config.py, and optionally appends verified addition
 
 import argparse
 import asyncio
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from html.parser import HTMLParser
 import json
 import logging
@@ -32,7 +32,6 @@ from tools.probe_ats import ProbeResult, append_to_config, deduplicate_results
 
 try:
     from rich.console import Console
-    from rich.table import Table
 
     console = Console()
     HAVE_RICH = True

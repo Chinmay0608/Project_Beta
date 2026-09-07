@@ -152,7 +152,7 @@ def test_cli_apply_command(tmp_path: Path, sample_jobs: list[JobPosting]) -> Non
     assert res.exit_code == 0
     assert "Marked job" in res.output
     assert "APPLIED" in res.output
-    assert "Applied on company careers portal" in res.output
+    assert "Applied on company careers portal" in " ".join(res.output.split())
 
     # Check database
     updated = get_job_by_id(num_id, db_path=test_db)
@@ -323,3 +323,33 @@ def test_numeric_id_exact_rowid_no_wildcard_collision(tmp_path: Path) -> None:
     assert veeva_updated["status"] == "DISMISSED"
     celonis_updated = get_job_by_id(1, db_path=test_db)
     assert celonis_updated["status"] == "NEW"
+
+
+def test_dismiss_and_apply_by_url(tmp_path: Path) -> None:
+    """Verify jobs can be dismissed and applied using direct apply URLs."""
+    test_db = tmp_path / "test_url_tracking.db"
+    posting = JobPosting(
+        id="email_linkedin_998877",
+        company="Direct Apply Corp",
+        title="Software Engineer I",
+        location="Bengaluru, India",
+        apply_url="https://www.linkedin.com/jobs/view/9988776655/",
+        provider=ATSProvider.EMAIL_ALERT,
+    )
+    record_jobs([posting], db_path=test_db)
+
+    # Dismiss by direct URL
+    res = runner.invoke(app, ["dismiss", "https://www.linkedin.com/jobs/view/9988776655/", "--db", str(test_db)])
+    assert res.exit_code == 0
+    assert "Direct Apply Corp" in res.output
+    assert "DISMISSED" in res.output
+
+    # Check database status
+    job = get_job_by_id("https://www.linkedin.com/jobs/view/9988776655/", db_path=test_db)
+    assert job is not None
+    assert job["status"] == "DISMISSED"
+
+    # Restore / undismiss by direct URL
+    res_restore = runner.invoke(app, ["restore", "https://www.linkedin.com/jobs/view/9988776655/", "--db", str(test_db)])
+    assert res_restore.exit_code == 0
+    assert "NEW" in res_restore.output

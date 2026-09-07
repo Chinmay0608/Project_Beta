@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any, Optional, Union
 import urllib.parse
@@ -15,16 +16,36 @@ def get_db_path(custom_path: Optional[Path] = None) -> Path:
 
 
 def canonicalize_url(url: str) -> str:
-    """Normalize and strip tracking query parameters (gh_jid, utm_*, etc.) and trailing slashes."""
+    """Normalize and strip tracking query parameters (gh_jid, utm_*, etc.) while preserving job IDs for platforms like Glassdoor and Indeed."""
     if not url:
         return ""
     try:
-        parsed = urllib.parse.urlparse(str(url).strip())
+        url_str = str(url).strip()
+        parsed = urllib.parse.urlparse(url_str)
+        netloc = parsed.netloc.lower()
+
+        # Preserve Glassdoor job ID in query param (?jl=...)
+        if "glassdoor." in netloc:
+            m_jl = re.search(r"(?:jl|jobListingId)=([0-9]+)", url_str)
+            if m_jl:
+                return f"https://www.glassdoor.com/job-listing/?jl={m_jl.group(1)}"
+
+        # Preserve Indeed job ID in query param (?jk=...)
+        if "indeed." in netloc:
+            query_dict = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
+            jk_val = query_dict.get("jk", [None])[0]
+            if jk_val:
+                return f"https://www.indeed.com/viewjob?jk={jk_val}"
+
+        # Canonicalize LinkedIn job URLs: https://www.linkedin.com/jobs/view/<id>/
+        m_li = re.search(r"linkedin\.com/(?:comm/)?jobs/view/([0-9]+)", url_str)
+        if m_li:
+            return f"https://www.linkedin.com/jobs/view/{m_li.group(1)}/"
+
         path = parsed.path.rstrip("/")
-        # Standard ATS paths identify the job listing.
-        # Query parameters are tracking, referral, or duplication artifacts.
+        # Standard ATS paths (Greenhouse, Lever, Ashby, Workday) identify the job listing in the path.
         clean_url = urllib.parse.urlunparse(
-            (parsed.scheme.lower(), parsed.netloc.lower(), path, "", "", "")
+            (parsed.scheme.lower(), netloc, path, "", "", "")
         )
         return clean_url
     except Exception:
@@ -95,9 +116,46 @@ def cleanup_duplicate_jobs(db_path: Optional[Path] = None) -> int:
             """
         )
         deleted_by_semantic = cursor.rowcount
+
+        # Step 4: Delete cross-platform duplicate records for same (company, title) in India/Remote,
+        # ensuring that APPLIED/INTERVIEWING/REJECTED/DISMISSED statuses and canonical ATS links are preserved.
+        deleted_by_role = 0
+        cursor.execute("PRAGMA table_info(seen_jobs)")
+        cols = {row[1] for row in cursor.fetchall()}
+        if "status" in cols:
+            cursor.execute(
+                """
+                DELETE FROM seen_jobs
+                WHERE id NOT IN (
+                    SELECT id FROM (
+                        SELECT id,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY lower(company), lower(title)
+                                   ORDER BY 
+                                       CASE 
+                                           WHEN status = 'APPLIED' THEN 1
+                                           WHEN status = 'INTERVIEWING' THEN 2
+                                           WHEN status = 'REJECTED' THEN 3
+                                           WHEN status = 'DISMISSED' THEN 4
+                                           ELSE 5 
+                                       END ASC,
+                                       CASE WHEN provider != 'email_alert' THEN 1 ELSE 2 END ASC,
+                                       CASE WHEN lower(location) IN ('india', 'remote') THEN 2 ELSE 1 END ASC,
+                                       last_seen_at DESC,
+                                       first_seen_at DESC,
+                                       id ASC
+                               ) as rn
+                        FROM seen_jobs
+                        WHERE (lower(location) LIKE '%india%' OR lower(location) LIKE '%remote%' OR (is_remote IS NOT NULL AND is_remote = 1))
+                    ) WHERE rn = 1
+                )
+                AND (lower(location) LIKE '%india%' OR lower(location) LIKE '%remote%' OR (is_remote IS NOT NULL AND is_remote = 1));
+                """
+            )
+            deleted_by_role = cursor.rowcount
         conn.commit()
 
-        return deleted_by_url + deleted_by_semantic
+        return deleted_by_url + deleted_by_semantic + deleted_by_role
 
 
 def init_db(db_path: Optional[Path] = None) -> None:
@@ -122,6 +180,7 @@ def init_db(db_path: Optional[Path] = None) -> None:
                 status TEXT DEFAULT 'NEW',
                 applied_at TIMESTAMP NULL,
                 notes TEXT NULL,
+                direct_search_url TEXT NULL,
                 first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -143,11 +202,13 @@ def init_db(db_path: Optional[Path] = None) -> None:
                     cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN applied_at TIMESTAMP NULL")
                 if "notes" not in columns:
                     cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN notes TEXT NULL")
+                if "direct_search_url" not in columns:
+                    cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN direct_search_url TEXT NULL")
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_seen_jobs_status ON seen_jobs(status);")
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'")
-        if not cursor.fetchone():
-            cursor.execute("CREATE VIEW IF NOT EXISTS jobs AS SELECT rowid AS numeric_id, * FROM seen_jobs;")
+        # Recreate jobs view to expose direct_search_url and rowid as numeric_id
+        cursor.execute("DROP VIEW IF EXISTS jobs;")
+        cursor.execute("CREATE VIEW jobs AS SELECT rowid AS numeric_id, * FROM seen_jobs;")
 
         # Backfill is_remote for any pre-existing records matching remote patterns
         cursor.execute(
@@ -197,6 +258,19 @@ def init_db(db_path: Optional[Path] = None) -> None:
         cursor.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_dispatched_alerts_platform ON dispatched_alerts(platform);
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS seen_emails (
+                uid TEXT PRIMARY KEY,
+                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_seen_emails_uid ON seen_emails(uid);
             """
         )
         conn.commit()
@@ -317,8 +391,31 @@ def filter_new_jobs(
             job.title.lower().strip(),
             job.location.lower().strip(),
         )
+        comp_lower = job.company.lower().strip()
+        title_lower = job.title.lower().strip()
+        loc_lower = job.location.lower().strip()
 
-        if key in seen_ids or clean_url in seen_urls or sem_key in seen_semantic:
+        cursor.execute(
+            """
+            SELECT id FROM seen_jobs
+            WHERE id = ?
+               OR lower(apply_url) = ?
+               OR (lower(company) = ? AND lower(title) = ? AND lower(location) = ?)
+               OR (lower(company) = ? AND lower(title) = ? AND (
+                   lower(location) = 'india' OR ? = 'india'
+                   OR lower(location) LIKE '%' || ? || '%'
+                   OR ? LIKE '%' || lower(location) || '%'
+               ))
+            LIMIT 1
+            """,
+            (
+                key, clean_url.lower(),
+                comp_lower, title_lower, loc_lower,
+                comp_lower, title_lower, loc_lower, loc_lower, loc_lower,
+            ),
+        )
+
+        if cursor.fetchone() or key in seen_ids or clean_url in seen_urls or sem_key in seen_semantic:
             existing_jobs.append(job)
         else:
             new_jobs.append(job)
@@ -367,18 +464,53 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
 
             cursor.execute(
                 """
-                SELECT id FROM seen_jobs
+                SELECT id, status, provider, apply_url, location FROM seen_jobs
                 WHERE id = ?
                    OR lower(apply_url) = ?
                    OR (lower(company) = ? AND lower(title) = ? AND lower(location) = ?)
+                   OR (lower(company) = ? AND lower(title) = ? AND (
+                       lower(location) = 'india' OR ? = 'india'
+                       OR lower(location) LIKE '%' || ? || '%'
+                       OR ? LIKE '%' || lower(location) || '%'
+                   ))
+                ORDER BY
+                    CASE
+                        WHEN status = 'APPLIED' THEN 1
+                        WHEN status = 'INTERVIEWING' THEN 2
+                        WHEN status = 'REJECTED' THEN 3
+                        WHEN status = 'DISMISSED' THEN 4
+                        ELSE 5
+                    END ASC,
+                    CASE WHEN provider != 'email_alert' THEN 1 ELSE 2 END ASC
                 LIMIT 1
                 """,
-                (job_key, clean_url.lower(), comp_lower, title_lower, loc_lower),
+                (
+                    job_key, clean_url.lower(),
+                    comp_lower, title_lower, loc_lower,
+                    comp_lower, title_lower, loc_lower, loc_lower, loc_lower,
+                ),
             )
             matched = cursor.fetchone()
 
             if matched:
-                matched_id = matched[0]
+                matched_id, existing_status, existing_provider, existing_url, existing_loc = matched
+                target_status = existing_status if existing_status != "NEW" else job.status
+                target_url = (
+                    existing_url
+                    if existing_provider != "email_alert" and job.provider == ATSProvider.EMAIL_ALERT
+                    else clean_url
+                )
+                target_provider = (
+                    existing_provider
+                    if existing_provider != "email_alert" and job.provider == ATSProvider.EMAIL_ALERT
+                    else job.provider.value
+                )
+                target_loc = (
+                    existing_loc
+                    if existing_loc.lower() != "india" and loc_lower == "india"
+                    else job.location
+                )
+
                 cursor.execute(
                     """
                     UPDATE seen_jobs SET
@@ -390,17 +522,21 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                         provider = ?,
                         published_date = COALESCE(NULLIF(?, ''), published_date),
                         is_active = 1,
-                        is_remote = ?
+                        is_remote = ?,
+                        status = ?,
+                        direct_search_url = COALESCE(?, direct_search_url)
                     WHERE id = ?
                     """,
                     (
                         job.company,
                         job.title,
-                        job.location,
-                        clean_url,
-                        job.provider.value,
+                        target_loc,
+                        target_url,
+                        target_provider,
                         job.published_date or "Active",
                         1 if job.is_remote else 0,
+                        target_status,
+                        getattr(job, "direct_search_url", None),
                         matched_id,
                     ),
                 )
@@ -408,9 +544,9 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                 cursor.execute(
                     """
                     INSERT INTO seen_jobs (
-                        id, company, title, location, apply_url, provider, published_date, is_active, is_remote, status, applied_at, notes, first_seen_at, last_seen_at
+                        id, company, title, location, apply_url, provider, published_date, is_active, is_remote, status, applied_at, notes, direct_search_url, first_seen_at, last_seen_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ON CONFLICT(id) DO UPDATE SET
                         last_seen_at = CURRENT_TIMESTAMP,
                         company = excluded.company,
@@ -419,7 +555,8 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                         apply_url = excluded.apply_url,
                         published_date = excluded.published_date,
                         is_active = 1,
-                        is_remote = excluded.is_remote
+                        is_remote = excluded.is_remote,
+                        direct_search_url = COALESCE(excluded.direct_search_url, seen_jobs.direct_search_url)
                     """,
                     (
                         job_key,
@@ -433,22 +570,35 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                         getattr(job, "status", None) or "NEW",
                         getattr(job, "applied_at", None),
                         getattr(job, "notes", None),
+                        getattr(job, "direct_search_url", None),
                     ),
                 )
 
         conn.commit()
 
-        # Attach persisted database rowid, status, applied_at, and notes back to the JobPosting instances
-        cursor.execute("SELECT rowid, id, status, applied_at, notes FROM seen_jobs")
-        db_map = {row[1]: (row[0], row[2], row[3], row[4]) for row in cursor.fetchall()}
+        # Attach persisted database rowid, status, applied_at, notes, and direct_search_url back to the JobPosting instances
+        cursor.execute(
+            "SELECT rowid, id, lower(apply_url), lower(company), lower(title), lower(location), status, applied_at, notes, direct_search_url FROM seen_jobs"
+        )
+        rows = cursor.fetchall()
+        id_map = {r[1]: (r[0], r[6], r[7], r[8], r[9]) for r in rows}
+        url_map = {r[2]: (r[0], r[6], r[7], r[8], r[9]) for r in rows if r[2]}
+        role_map = {(r[3], r[4], r[5]): (r[0], r[6], r[7], r[8], r[9]) for r in rows}
+
         for j in jobs:
-            key = make_job_key(j)
-            if key in db_map:
-                rowid, stat, app_at, nts = db_map[key]
-                j.numeric_id = rowid
-                j.status = stat
-                j.applied_at = app_at
-                j.notes = nts
+            clean_u = canonicalize_url(str(j.apply_url)).lower()
+            sem_k = (
+                j.company.lower().strip(),
+                j.title.lower().strip(),
+                j.location.lower().strip(),
+            )
+            meta = id_map.get(make_job_key(j)) or url_map.get(clean_u) or role_map.get(sem_k)
+            if meta:
+                setattr(j, "numeric_id", meta[0])
+                setattr(j, "status", meta[1])
+                setattr(j, "applied_at", meta[2])
+                setattr(j, "notes", meta[3])
+                setattr(j, "direct_search_url", meta[4])
 
 
 def get_stats(db_path: Optional[Path] = None) -> dict[str, Any]:
@@ -477,9 +627,17 @@ def get_stats(db_path: Optional[Path] = None) -> dict[str, Any]:
         )
         company_counts = dict(cursor.fetchall())
 
+        cursor.execute("SELECT status, COUNT(*) FROM seen_jobs GROUP BY status")
+        status_counts = dict(cursor.fetchall())
+
     return {
         "total_tracked": total_tracked,
         "total_remote": total_remote,
+        "status_counts": status_counts,
+        "active_count": status_counts.get("NEW", 0),
+        "needs_resolve_count": status_counts.get("NEEDS_RESOLVE", 0),
+        "dismissed_count": status_counts.get("DISMISSED", 0),
+        "applied_count": status_counts.get("APPLIED", 0),
         "company_breakdown": company_counts,
         "first_recorded": first_recorded,
         "last_active": last_active,
@@ -509,9 +667,9 @@ def get_latest_jobs(
         cursor = conn.cursor()
         cursor.execute(
             f"""
-            SELECT rowid AS numeric_id, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, first_seen_at, last_seen_at
+            SELECT rowid AS numeric_id, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, direct_search_url, first_seen_at, last_seen_at
             FROM (
-                SELECT rowid, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, first_seen_at, last_seen_at,
+                SELECT rowid, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, direct_search_url, first_seen_at, last_seen_at,
                        ROW_NUMBER() OVER (
                            PARTITION BY lower(company), lower(title), lower(location)
                            ORDER BY last_seen_at DESC, first_seen_at DESC
@@ -577,9 +735,9 @@ def query_jobs(
             params.append(f"%{loc_str}%")
 
     query = f"""
-        SELECT rowid AS numeric_id, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, first_seen_at, last_seen_at
+        SELECT rowid AS numeric_id, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, direct_search_url, first_seen_at, last_seen_at
         FROM (
-            SELECT rowid, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, first_seen_at, last_seen_at,
+            SELECT rowid, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, direct_search_url, first_seen_at, last_seen_at,
                    ROW_NUMBER() OVER (
                        PARTITION BY lower(company), lower(title), lower(location)
                        ORDER BY last_seen_at DESC, first_seen_at DESC
@@ -601,7 +759,33 @@ def query_jobs(
         return [dict(row) for row in rows]
 
 
-VALID_JOB_STATUSES = {"NEW", "APPLIED", "INTERVIEWING", "REJECTED", "DISMISSED"}
+VALID_JOB_STATUSES = {"NEW", "APPLIED", "INTERVIEWING", "REJECTED", "DISMISSED", "NEEDS_RESOLVE"}
+
+
+def update_job_direct_search_url(
+    job_id: Union[int, str],
+    direct_search_url: str,
+    db_path: Optional[Path] = None,
+) -> bool:
+    """Update direct_search_url for a job by numeric rowid or string ID."""
+    target_job = get_job_by_id(job_id, db_path=db_path)
+    if not target_job:
+        return False
+
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+    target_rowid = target_job["numeric_id"]
+
+    with sqlite3.connect(target_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen_jobs'")
+        table_name = "seen_jobs" if cursor.fetchone() else "jobs"
+        cursor.execute(
+            f"UPDATE {table_name} SET direct_search_url = ? WHERE rowid = ?",
+            (direct_search_url, target_rowid),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
 
 
 def mark_job_status(
@@ -610,7 +794,7 @@ def mark_job_status(
     notes: Optional[str] = None,
     db_path: Optional[Path] = None,
 ) -> bool:
-    """Update tracking status (NEW, APPLIED, INTERVIEWING, REJECTED, DISMISSED) and notes for a job.
+    """Update tracking status (NEW, APPLIED, INTERVIEWING, REJECTED, DISMISSED, NEEDS_RESOLVE) and notes for a job.
 
     Accepts numeric rowid (e.g. 12 or "12") or string ID (e.g. "greenhouse_celonis_7791267003").
     """
@@ -665,6 +849,51 @@ def mark_job_status(
         return cursor.rowcount > 0
 
 
+def purge_or_dismiss_job(
+    job_id: Union[int, str],
+    reason: str,
+    hard_delete: bool = False,
+    db_path: Optional[Path] = None,
+) -> bool:
+    """Purge (delete) or dismiss a job by ID, recording the reason.
+
+    If hard_delete is True, permanently deletes the record from seen_jobs.
+    If hard_delete is False, marks status as 'DISMISSED' and sets/appends reason to notes.
+    Accepts numeric rowid or string ID.
+    """
+    target_job = get_job_by_id(job_id, db_path=db_path)
+    if not target_job:
+        return False
+
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+    target_rowid = target_job["numeric_id"]
+
+    with sqlite3.connect(target_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen_jobs'")
+        table_name = "seen_jobs" if cursor.fetchone() else "jobs"
+
+        if hard_delete:
+            cursor.execute(f"DELETE FROM {table_name} WHERE rowid = ?", (target_rowid,))
+            conn.commit()
+            return cursor.rowcount > 0
+        else:
+            existing_notes = target_job.get("notes") or ""
+            note_str = f"Auto-dismissed: {reason.strip()}"
+            if existing_notes and note_str not in existing_notes:
+                final_notes = f"{existing_notes} | {note_str}"
+            else:
+                final_notes = note_str
+
+            cursor.execute(
+                f"UPDATE {table_name} SET status = 'DISMISSED', is_active = 0, notes = ? WHERE rowid = ?",
+                (final_notes, target_rowid),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+
 def get_job_by_id(
     job_id: Union[int, str],
     db_path: Optional[Path] = None,
@@ -708,7 +937,17 @@ def get_job_by_id(
             if row:
                 return dict(row)
 
-            # 2. Match ATS specific ID suffix with escaped underscore
+            # 2. Match by apply URL or canonical apply URL
+            clean_url = canonicalize_url(raw_id).lower()
+            cursor.execute(
+                f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE lower(apply_url) = ? OR lower(apply_url) = ? OR lower(apply_url) = ? LIMIT 1",
+                (raw_id.lower(), raw_id.lower().rstrip("/"), clean_url),
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+
+            # 3. Match ATS specific ID suffix with escaped underscore
             cursor.execute(
                 f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE id LIKE ? ESCAPE '\\' LIMIT 1",
                 (f"%\\_{raw_id}",),
@@ -746,3 +985,197 @@ def get_jobs_by_status(
 
         cursor.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
+
+
+def find_jobs_by_selector(
+    selector: str,
+    db_path: Optional[Path] = None,
+) -> list[dict[str, Any]]:
+    """Resolve one or more jobs by numeric rowids, string IDs, or company/title text search.
+
+    Supports:
+    - Single numeric ID: "42", "#42"
+    - Multiple comma- or space-separated numeric IDs: "1, 2, 3", "1 4 7", "#1, #2", "1 and 4"
+    - Exact string ID / URL: "email_alert_...", "greenhouse_celonis_..."
+    - Company name or role title substring match: "Devmani Traders", "BT Group", "Associate Engineer"
+    """
+    if not selector or not str(selector).strip():
+        return []
+
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+    raw = str(selector).strip()
+
+    # 1. Check if input is a list of comma-, semicolon-, or whitespace-separated numeric tokens
+    tokens = [
+        re.sub(r"^#", "", t).strip()
+        for t in re.split(r"[,;\s]+", raw)
+        if t.strip() and t.lower() not in ("and", "&")
+    ]
+
+    if tokens and all(t.isdigit() for t in tokens):
+        results: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for tok in tokens:
+            job = get_job_by_id(tok, db_path=db_path)
+            if job and job["id"] not in seen_ids:
+                seen_ids.add(job["id"])
+                results.append(job)
+        if results:
+            return results
+
+    # 2. Try single exact ID lookup (handles single number, #ID, or full unique key)
+    cleaned_single = re.sub(r"^#", "", raw).strip()
+    single_job = get_job_by_id(cleaned_single, db_path=db_path)
+    if single_job:
+        return [single_job]
+
+    # 3. Check for multiple comma- or 'and'-separated company/role queries (e.g. "uipath, celonis", "BT Group and Devmani Traders")
+    sub_queries = [
+        s.strip()
+        for s in re.split(r"[,;]|\s+(?:and|&)\s+", raw, flags=re.IGNORECASE)
+        if s.strip() and s.lower() not in ("and", "&")
+    ]
+
+    with sqlite3.connect(target_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen_jobs'")
+        table_name = "seen_jobs" if cursor.fetchone() else "jobs"
+
+        if len(sub_queries) > 1:
+            multi_results: list[dict[str, Any]] = []
+            seen_ids: set[str] = set()
+            for sq in sub_queries:
+                cleaned_sq = re.sub(r"^#", "", sq).strip()
+                if cleaned_sq.isdigit():
+                    j = get_job_by_id(cleaned_sq, db_path=db_path)
+                    if j and j["id"] not in seen_ids:
+                        seen_ids.add(j["id"])
+                        multi_results.append(j)
+                    continue
+
+                term = f"%{sq.lower()}%"
+                cursor.execute(
+                    f"""
+                    SELECT rowid AS numeric_id, * FROM {table_name}
+                    WHERE lower(company) LIKE ? OR lower(title) LIKE ?
+                    ORDER BY last_seen_at DESC LIMIT 25
+                    """,
+                    (term, term),
+                )
+                for r in cursor.fetchall():
+                    jd = dict(r)
+                    if jd["id"] not in seen_ids:
+                        seen_ids.add(jd["id"])
+                        multi_results.append(jd)
+
+            if multi_results:
+                return multi_results
+
+        # 4. Fallback: Search by company name or title keyword in seen_jobs
+        search_term = f"%{raw.lower()}%"
+        cursor.execute(
+            f"""
+            SELECT rowid AS numeric_id, * FROM {table_name}
+            WHERE lower(company) LIKE ? OR lower(title) LIKE ?
+            ORDER BY last_seen_at DESC LIMIT 25
+            """,
+            (search_term, search_term),
+        )
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
+def is_email_seen(
+    uid: str,
+    db_path: Optional[Path] = None,
+    account: Optional[str] = None,
+) -> bool:
+    """Check if an email UID has already been processed for a given account."""
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+    clean_u = str(uid).strip()
+    keys = [f"{account}:{clean_u}"] if account else [clean_u]
+    if account and account.lower() == "chinmay8064@gmail.com":
+        keys.append(clean_u)
+    with sqlite3.connect(target_path) as conn:
+        cursor = conn.cursor()
+        placeholders = ",".join("?" for _ in keys)
+        cursor.execute(f"SELECT 1 FROM seen_emails WHERE uid IN ({placeholders}) LIMIT 1", keys)
+        return cursor.fetchone() is not None
+
+
+def filter_unseen_email_uids(
+    uids: list[str],
+    db_path: Optional[Path] = None,
+    account: Optional[str] = None,
+) -> list[str]:
+    """Filter out email UIDs that have already been recorded in seen_emails for a given account."""
+    if not uids:
+        return []
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+    clean_uids = [str(u).strip() for u in uids if str(u).strip()]
+    if not clean_uids:
+        return []
+
+    # Map candidate keys to check in DB
+    # If account is given, check f"{account}:{u}".
+    # If account is chinmay8064@gmail.com, also check bare u for backward compatibility.
+    keys_to_uid: dict[str, str] = {}
+    for u in clean_uids:
+        if account:
+            keys_to_uid[f"{account}:{u}"] = u
+            if account.lower() == "chinmay8064@gmail.com":
+                keys_to_uid[u] = u
+        else:
+            keys_to_uid[u] = u
+
+    all_keys = list(keys_to_uid.keys())
+    seen_keys: set[str] = set()
+    chunk_size = 500
+    with sqlite3.connect(target_path) as conn:
+        cursor = conn.cursor()
+        for i in range(0, len(all_keys), chunk_size):
+            chunk = all_keys[i : i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            cursor.execute(
+                f"SELECT uid FROM seen_emails WHERE uid IN ({placeholders})",
+                chunk,
+            )
+            seen_keys.update(row[0] for row in cursor.fetchall())
+
+    seen_uids = {keys_to_uid[k] for k in seen_keys if k in keys_to_uid}
+    return [u for u in clean_uids if u not in seen_uids]
+
+
+def record_seen_email_uids(
+    uids: list[str],
+    db_path: Optional[Path] = None,
+    account: Optional[str] = None,
+) -> None:
+    """Record email UIDs into seen_emails so they are skipped in subsequent syncs."""
+    if not uids:
+        return
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+    clean_keys = [
+        (f"{account}:{str(u).strip()}" if account else str(u).strip(),)
+        for u in uids
+        if str(u).strip()
+    ]
+    if not clean_keys:
+        return
+
+    with sqlite3.connect(target_path) as conn:
+        cursor = conn.cursor()
+        cursor.executemany(
+            """
+            INSERT OR IGNORE INTO seen_emails (uid, processed_at)
+            VALUES (?, CURRENT_TIMESTAMP)
+            """,
+            clean_keys,
+        )
+        conn.commit()
+

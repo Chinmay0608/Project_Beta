@@ -1,5 +1,7 @@
 """Unit tests for title and location filtering logic."""
 
+from typing import Optional
+
 import pytest
 from gcc_job_radar.filters import (
     is_potential_india_location,
@@ -130,6 +132,9 @@ def test_matches_target_title_positive(title: str) -> None:
         "UI Engineer",  # Not explicitly entry level; verifies 'UI' does not falsely match roman 'ii'
         "Frontend Engineer",
         "Backend Developer",
+        "Android Developer",
+        "Android Developer Intern",
+        "Android Engineer I",
         "",
         "   ",
     ],
@@ -243,3 +248,62 @@ def test_is_potential_india_location_fast_short_circuit() -> None:
     assert is_potential_india_location("London, UK") is False
     assert is_potential_india_location("Sydney, Australia") is False
     assert is_potential_india_location("") is False
+
+
+# ==============================================================================
+# Fractional / range experience rejection
+# ==============================================================================
+
+@pytest.mark.parametrize(
+    "content,expected",
+    [
+        # Fractional range: min ≥ 2.5 → reject
+        ("Experience: 2.6 – 5 Years", True),
+        ("Experience: 2.5 - 4 years", True),
+        ("Experience: 3.0 to 6 years", True),
+        # Fractional range: min < 2.5 → accept
+        ("Experience: 0 – 2 Years", False),
+        ("Experience: 1 - 2 years", False),
+        ("0 to 2 years of experience", False),
+        # N+ pattern: N ≥ 2.5 → reject
+        ("2.5+ years experience", True),
+        ("3+ years of experience", True),
+        # N+ pattern: N < 2.5 → accept
+        ("1+ years of experience", False),
+        ("2 years experience", False),
+        # Minimum pattern: min ≥ 2.5 → reject
+        ("minimum 3 years of experience", True),
+        ("min 2.5 years", True),
+        # Minimum pattern: min < 2.5 → accept
+        ("minimum 1 year of experience", False),
+        # No experience context
+        ("Freshers eligible", False),
+        ("Entry-level role, 0–1 year preferred", False),
+    ],
+)
+def test_requires_experienced_candidate_fractional(content: str, expected: bool) -> None:
+    """Verify fractional and range experience patterns are correctly detected."""
+    from gcc_job_radar.filters import requires_experienced_candidate
+    assert requires_experienced_candidate(content) is expected
+
+
+@pytest.mark.parametrize(
+    "title,snippet,expected",
+    [
+        # Generic title + snippet rejecting: should be disqualified
+        ("Full Stack Developer", "Experience: 2.6 – 5 Years | Bengaluru", False),
+        ("Software Engineer", "3+ years of experience required", False),
+        # Generic title + snippet accepting: should qualify
+        ("Full Stack Developer", "0 – 2 Years | Freshers welcome", True),
+        ("Software Engineer", "Freshers are eligible | 2025 batch welcome", True),
+        # Title-only card (no snippet): falls back to title heuristics
+        ("Software Engineer I", None, True),
+        ("Senior Software Engineer", None, False),
+        # Entry-level title overrides snippet ambiguity
+        ("Software Engineer Trainee", "Experience: 2 - 3 years", True),  # title wins as entry
+    ],
+)
+def test_is_entry_level_with_snippet(title: str, snippet: Optional[str], expected: bool) -> None:
+    """Verify is_entry_level correctly uses the snippet content fallback for generic titles."""
+    from gcc_job_radar.filters import is_entry_level
+    assert is_entry_level(title, content=snippet) is expected

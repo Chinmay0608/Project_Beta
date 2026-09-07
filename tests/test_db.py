@@ -4,7 +4,16 @@ from pathlib import Path
 import sqlite3
 import pytest
 
-from gcc_job_radar.db import filter_new_jobs, get_stats, init_db, make_job_key, record_jobs
+from gcc_job_radar.db import (
+    filter_new_jobs,
+    filter_unseen_email_uids,
+    get_stats,
+    init_db,
+    is_email_seen,
+    make_job_key,
+    record_jobs,
+    record_seen_email_uids,
+)
 from gcc_job_radar.models import ATSProvider, JobPosting
 
 
@@ -251,6 +260,106 @@ def test_cleanup_duplicate_jobs(tmp_path: Path) -> None:
         cursor = conn.cursor()
         cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_seen_jobs_company_title_loc'")
         assert cursor.fetchone() is not None
+
+
+def test_seen_emails_tracking(tmp_path: Path) -> None:
+    """Verify seen_emails table lifecycle: insertion, duplicate ignore, and filtering."""
+    db_file = tmp_path / "test_seen_emails.db"
+    init_db(db_file)
+
+    # Initially none are seen
+    assert is_email_seen("101", db_file) is False
+    assert filter_unseen_email_uids(["101", "102", "103"], db_file) == ["101", "102", "103"]
+
+    # Record 101 and 102
+    record_seen_email_uids(["101", "102"], db_file)
+    assert is_email_seen("101", db_file) is True
+    assert is_email_seen("102", db_file) is True
+    assert is_email_seen("103", db_file) is False
+
+    # Filter unseen should now only return 103 and 104
+    unseen = filter_unseen_email_uids(["101", "102", "103", "104"], db_file)
+    assert unseen == ["103", "104"]
+
+    # Recording duplicates should be safely ignored
+    record_seen_email_uids(["101", "103"], db_file)
+    assert is_email_seen("103", db_file) is True
+
+    # Empty inputs handled cleanly
+    assert filter_unseen_email_uids([], db_file) == []
+    record_seen_email_uids([], db_file)
+
+
+def test_seen_emails_multi_account_isolation(tmp_path: Path) -> None:
+    """Verify that multiple email accounts with identical UIDs remain isolated."""
+    db_file = tmp_path / "test_multi_seen_emails.db"
+    init_db(db_file)
+
+    acc1 = "user1@example.com"
+    acc2 = "user2@example.com"
+
+    # User 1 has seen UID 999
+    record_seen_email_uids(["999"], db_file, account=acc1)
+    assert is_email_seen("999", db_file, account=acc1) is True
+
+    # User 2 has NOT seen UID 999
+    assert is_email_seen("999", db_file, account=acc2) is False
+    assert filter_unseen_email_uids(["999"], db_file, account=acc2) == ["999"]
+
+    # When User 2 processes UID 999, it is recorded independently
+    record_seen_email_uids(["999"], db_file, account=acc2)
+    assert is_email_seen("999", db_file, account=acc2) is True
+    assert filter_unseen_email_uids(["999"], db_file, account=acc2) == []
+
+
+def test_cross_platform_duplicate_preserves_applied_status(tmp_path: Path) -> None:
+    """Verify that an email alert duplicate role preserves the APPLIED status and canonical ATS URL."""
+    from gcc_job_radar.db import filter_new_jobs, get_latest_jobs, record_jobs
+    from gcc_job_radar.models import ATSProvider, JobPosting
+
+    db_file = tmp_path / "test_cross_platform.db"
+    init_db(db_file)
+
+    # 1. User applies to Hevo Data via Lever
+    lever_job = JobPosting(
+        id="lever_hevo_123",
+        company="Hevo Data",
+        title="SDE I",
+        location="Bangalore, India",
+        apply_url="https://jobs.lever.co/hevodata/6cbbe304-e065-4711-bf3e-756795d2bc2a",
+        provider=ATSProvider.LEVER,
+        published_date="2026-07-27",
+        status="APPLIED",
+    )
+    record_jobs([lever_job], db_path=db_file)
+
+    # 2. Email alert arrives later from Glassdoor with location 'India'
+    email_job = JobPosting(
+        id="email_glassdoor_999",
+        company="Hevo Data",
+        title="SDE I",
+        location="India",
+        apply_url="https://www.glassdoor.com/job-listing/?jl=1010210834752",
+        provider=ATSProvider.EMAIL_ALERT,
+        published_date="Recent",
+        status="NEW",
+    )
+
+    # filter_new_jobs should classify it as existing, not new
+    new_jobs, existing_jobs = filter_new_jobs([email_job], db_path=db_file)
+    assert len(new_jobs) == 0
+    assert len(existing_jobs) == 1
+
+    # record_jobs should update without overwriting APPLIED status or Lever URL
+    record_jobs([email_job], db_path=db_file)
+    all_jobs = get_latest_jobs(status="ALL", db_path=db_file)
+    assert len(all_jobs) == 1
+    saved_job = all_jobs[0]
+    assert saved_job["company"] == "Hevo Data"
+    assert saved_job["status"] == "APPLIED"
+    assert "jobs.lever.co" in saved_job["apply_url"]
+
+
 
 
 

@@ -1,7 +1,6 @@
 """Greenhouse ATS API client."""
 
 import logging
-from typing import Any
 import httpx
 import orjson
 from pydantic import ValidationError

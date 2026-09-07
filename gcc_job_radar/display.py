@@ -115,6 +115,8 @@ def render_results(jobs: list[JobPosting], is_new_only: bool = False) -> None:
                 stat_styled = "[bold red]REJECTED[/bold red]"
             elif stat == "INTERVIEWING":
                 stat_styled = "[bold cyan]INTERVIEWING[/bold cyan]"
+            elif stat == "NEEDS_RESOLVE":
+                stat_styled = "[bold yellow]NEEDS_RESOLVE[/bold yellow]"
             else:
                 stat_styled = f"[dim]{stat}[/dim]"
             row_cells.append(stat_styled)
@@ -129,13 +131,20 @@ def render_results(jobs: list[JobPosting], is_new_only: bool = False) -> None:
     console.print(table)
 
     # Print explicit clickable URLs list for terminals that don't support table OSC 8 hyperlinks or truncate them
+    from gcc_job_radar.link_resolver import resolve_effective_apply_url
+
     console.print("\n[bold cyan]Direct Apply Links:[/bold cyan]")
     for idx, job in enumerate(jobs, start=1):
         display_id = str(getattr(job, "numeric_id", None) or idx)
-        apply_url_str = str(job.apply_url)
+        effective_url, direct_search, label = resolve_effective_apply_url(job)
+        fallback_msg = (
+            f"\n     [dim]Direct search fallback:[/dim] [cyan]{direct_search}[/cyan]"
+            if direct_search and direct_search != effective_url
+            else ""
+        )
         console.print(
             f"  {display_id}. [bold white]{job.company}[/bold white] - [cyan]{job.title}[/cyan]\n"
-            f"     [bold underline blue]{apply_url_str}[/bold underline blue]"
+            f"     [bold underline blue]{effective_url}[/bold underline blue] [dim]({label})[/dim]{fallback_msg}"
         )
     label = "new" if is_new_only else "active"
     remote_summary = f" ([bold cyan]{remote_count}[/bold cyan] 100% remote)" if remote_count > 0 else ""

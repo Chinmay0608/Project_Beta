@@ -19,7 +19,6 @@ from gcc_job_radar.db import (
     filter_new_jobs,
     filter_unalerted_jobs,
     get_job_by_id,
-    get_jobs_by_status,
     get_stats,
     init_db,
     make_job_key,
@@ -66,6 +65,7 @@ def export_csv(jobs: list[JobPosting], path: Path) -> None:
                 "id",
                 "status",
                 "notes",
+                "direct_search_url",
             ],
         )
         writer.writeheader()
@@ -82,6 +82,7 @@ def export_csv(jobs: list[JobPosting], path: Path) -> None:
                     "id": getattr(job, "numeric_id", None) or job.id,
                     "status": getattr(job, "status", "NEW"),
                     "notes": getattr(job, "notes", "") or "",
+                    "direct_search_url": getattr(job, "direct_search_url", "") or "",
                 }
             )
     console.print(f"[bold green][+][/bold green] Exported {len(jobs)} postings to CSV: [cyan]{path}[/cyan]")
@@ -300,7 +301,7 @@ def list_jobs(
         "NEW",
         "--status",
         "-s",
-        help="Filter listed jobs by status ('NEW', 'APPLIED', 'INTERVIEWING', 'REJECTED', 'DISMISSED', or 'ALL'). [default: NEW]",
+        help="Filter listed jobs by status ('NEW', 'NEEDS_RESOLVE', 'APPLIED', 'INTERVIEWING', 'REJECTED', 'DISMISSED', or 'ALL'). [default: NEW]",
     ),
     remote_only: bool = typer.Option(
         False,
@@ -362,6 +363,7 @@ def list_jobs(
                     status=jd.get("status", "NEW"),
                     applied_at=jd.get("applied_at"),
                     notes=jd.get("notes"),
+                    direct_search_url=jd.get("direct_search_url"),
                 )
             )
         except Exception:
@@ -390,6 +392,12 @@ def apply_job(
         "-n",
         help="Optional notes for this application (e.g. referral, recruiter contact, date).",
     ),
+    fallback: bool = typer.Option(
+        False,
+        "--fallback",
+        "-f",
+        help="Open fallback direct ATS search query in browser.",
+    ),
     db_path: Optional[Path] = typer.Option(
         None,
         "--db",
@@ -402,6 +410,18 @@ def apply_job(
     if not job:
         console.print(f"[bold red]Error:[/bold red] Job with ID [yellow]'{job_id}'[/yellow] not found in database.")
         raise typer.Exit(code=1)
+
+    if fallback:
+        import webbrowser
+        from gcc_job_radar.link_resolver import build_direct_search_url
+
+        target_url = job.get("direct_search_url") or build_direct_search_url(job["company"], job["title"])
+        try:
+            webbrowser.open(str(target_url))
+        except Exception:
+            pass
+        fallback_note = f"Opened direct ATS search: {target_url}"
+        notes = f"{notes} | {fallback_note}" if notes else fallback_note
 
     mark_job_status(job_id=job_id, status="APPLIED", notes=notes, db_path=db_path)
     disp_id = job.get("numeric_id") or job_id
@@ -533,6 +553,226 @@ def bot_command(
         asyncio.run(run_bot_listener(bot_token=bot_token, allowed_chat_id=str(allowed_chat_id), db_path=db_path))
     except KeyboardInterrupt:
         console.print("\n[yellow]Telegram bot listener stopped.[/yellow]")
+
+
+@app.command("sync-mail")
+def sync_mail(
+    limit: int = typer.Option(
+        10,
+        "--limit",
+        "-l",
+        help="Maximum unread alert emails to process (default: 10).",
+    ),
+    days: int = typer.Option(
+        7,
+        "--days",
+        "-d",
+        help="Search emails received in the last N days (default: 7). Use 0 for all time.",
+    ),
+    mark_read: bool = typer.Option(
+        False,
+        "--mark-read",
+        help="Mark processed alert emails as READ in inbox (default: keep unread).",
+    ),
+    folder: str = typer.Option(
+        "INBOX",
+        "--folder",
+        "-f",
+        help="IMAP mailbox folder to inspect (default: INBOX).",
+    ),
+    server: Optional[str] = typer.Option(
+        None,
+        "--server",
+        help="IMAP server hostname (default: from EMAIL_IMAP_SERVER or imap.gmail.com).",
+    ),
+    user: Optional[str] = typer.Option(
+        None,
+        "--user",
+        "-u",
+        help="IMAP username / email address (or set EMAIL_USER in .env).",
+    ),
+    password: Optional[str] = typer.Option(
+        None,
+        "--password",
+        help="IMAP password / Google App Password (or set EMAIL_PASSWORD in .env).",
+    ),
+    all_emails: bool = typer.Option(
+        False,
+        "--all",
+        "-a",
+        help="Process recent alert emails even if already read (default: unread only).",
+    ),
+    query: Optional[str] = typer.Option(
+        None,
+        "--query",
+        "-q",
+        help="Custom IMAP search query (overrides default alert sender search).",
+    ),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+    notify_discord: Optional[str] = typer.Option(
+        None,
+        "--notify-discord",
+        help="Discord webhook URL to alert on newly detected postings.",
+    ),
+    notify_telegram_token: Optional[str] = typer.Option(
+        None,
+        "--notify-telegram-token",
+        help="Telegram bot token to alert on newly detected postings.",
+    ),
+    notify_telegram_chat: Optional[str] = typer.Option(
+        None,
+        "--notify-telegram-chat",
+        help="Telegram chat ID or channel to alert on newly detected postings.",
+    ),
+) -> None:
+    """Ingest job alert emails (LinkedIn, Naukri, Indeed) directly from inbox via IMAP SSL."""
+    import sys
+    root_dir = Path(__file__).resolve().parent.parent
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+
+    from tools.ingest_email import (
+        DEFAULT_IMAP_SERVER,
+        MissingEmailCredentialsError,
+        sync_email_alerts,
+    )
+
+    imap_server = server or DEFAULT_IMAP_SERVER
+    try:
+        jobs = sync_email_alerts(
+            server=imap_server,
+            user=user,
+            password=password,
+            folder=folder,
+            limit=limit,
+            days=days,
+            mark_read=mark_read,
+            unread_only=not all_emails,
+            search_query=query,
+            db_path=db_path,
+        )
+
+        # Dispatch notifications for newly detected postings (Discord / Telegram)
+        new_postings = [j for j in jobs if getattr(j, "status", "NEW").upper() == "NEW"]
+        if new_postings:
+            asyncio.run(
+                dispatch_notifications(
+                    new_jobs=new_postings,
+                    discord_webhook=notify_discord,
+                    telegram_token=notify_telegram_token,
+                    telegram_chat_id=notify_telegram_chat,
+                    db_path=db_path,
+                )
+            )
+
+        render_results(jobs, is_new_only=False)
+    except MissingEmailCredentialsError as exc:
+        console.print(str(exc))
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        console.print(f"[bold red]Email sync error:[/bold red] {exc}")
+        raise typer.Exit(code=1)
+
+
+@app.command("check-links")
+def check_links_command(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Check links and report dead postings without updating database status.",
+    ),
+    concurrency: int = typer.Option(
+        25,
+        "--concurrency",
+        "-c",
+        help="Maximum concurrent HTTP requests to verify links (default: 25).",
+    ),
+    limit: Optional[int] = typer.Option(
+        None,
+        "--limit",
+        "-l",
+        help="Maximum number of unapplied jobs to verify (default: all).",
+    ),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+) -> None:
+    """Validate URLs of active unapplied jobs and auto-dismiss broken/expired postings."""
+    import sys
+    root_dir = Path(__file__).resolve().parent.parent
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+
+    from tools.check_links import run_link_checker
+
+    run_link_checker(
+        db_path=db_path,
+        concurrency=concurrency,
+        limit=limit,
+        dry_run=dry_run,
+    )
+
+
+@app.command("deep-verify")
+def deep_verify(
+    batch: int = typer.Option(
+        2027,
+        "--batch",
+        "-b",
+        help="Target student graduation year to verify against (default: 2027).",
+    ),
+    concurrency: int = typer.Option(
+        25,
+        "--concurrency",
+        "-c",
+        help="Concurrent link crawler connections (default: 25).",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview evaluation and audit table without modifying database.",
+    ),
+    hard_delete: bool = typer.Option(
+        False,
+        "--hard-delete",
+        help="Permanently delete disqualified jobs from database instead of marking DISMISSED.",
+    ),
+    limit: Optional[int] = typer.Option(
+        None,
+        "--limit",
+        "-l",
+        help="Maximum number of active jobs to audit.",
+    ),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+) -> None:
+    """Crawl job posting links, read full descriptions, and purge/dismiss roles that do not fit Class of 2027."""
+    import sys
+    root_dir = Path(__file__).resolve().parent.parent
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+
+    from tools.deep_verify_jobs import run_deep_verification
+
+    asyncio.run(
+        run_deep_verification(
+            batch_year=batch,
+            concurrency=concurrency,
+            dry_run=dry_run,
+            hard_delete=hard_delete,
+            limit=limit,
+            db_path=db_path,
+        )
+    )
 
 
 @app.callback(invoke_without_command=True)

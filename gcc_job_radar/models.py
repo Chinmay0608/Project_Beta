@@ -14,6 +14,7 @@ class ATSProvider(str, Enum):
     SMARTRECRUITERS = "smartrecruiters"
     WORKDAY = "workday"
     PHENOM_SUCCESSFACTORS = "phenom_successfactors"
+    EMAIL_ALERT = "email_alert"
 
 
 class JobStatus(str, Enum):
@@ -24,6 +25,7 @@ class JobStatus(str, Enum):
     INTERVIEWING = "INTERVIEWING"
     REJECTED = "REJECTED"
     DISMISSED = "DISMISSED"
+    NEEDS_RESOLVE = "NEEDS_RESOLVE"
 
 
 class CompanyConfig(BaseModel):
@@ -51,6 +53,7 @@ class JobPosting(BaseModel):
     status: str = "NEW"
     applied_at: Optional[str] = None
     notes: Optional[str] = None
+    direct_search_url: Optional[str] = None
 
 
 # Backward and forward compatible alias

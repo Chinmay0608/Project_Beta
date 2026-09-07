@@ -45,3 +45,6 @@ htmlcov/
 
 # Scratch & Intermediate files
 targets_*.txt
+bot.log
+bot.pid
+*.lnk

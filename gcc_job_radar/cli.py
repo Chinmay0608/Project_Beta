@@ -18,6 +18,8 @@ from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.db import (
     filter_new_jobs,
     filter_unalerted_jobs,
+    get_dormant_companies_entries,
+    get_dormant_company_names,
     get_job_by_id,
     get_stale_applications,
     get_stats,
@@ -25,11 +27,14 @@ from gcc_job_radar.db import (
     make_job_key,
     mark_job_status,
     query_jobs,
+    reactivate_company,
+    record_company_scan_activity,
     record_jobs,
 )
 from gcc_job_radar.display import (
     console,
     render_banner,
+    render_dormant_companies,
     render_results,
     render_stale_applications,
     render_stats,
@@ -141,6 +146,21 @@ def scan(
         "--digest",
         help="Batch alerts into a single consolidated daily digest message.",
     ),
+    list_dormant: bool = typer.Option(
+        False,
+        "--list-dormant",
+        help="Display registered dormant / paused companies and exit.",
+    ),
+    reactivate_comp: Optional[str] = typer.Option(
+        None,
+        "--reactivate",
+        help="Reactivate a dormant company so it is monitored in scans.",
+    ),
+    auto_dormant_threshold: int = typer.Option(
+        5,
+        "--auto-dormant-threshold",
+        help="Number of consecutive scans with 0 matches before auto-marking a company dormant (0 to disable).",
+    ),
     stats: bool = typer.Option(
         False,
         "--stats",
@@ -197,10 +217,24 @@ def scan(
         min_score = 0
     if not isinstance(digest, bool):
         digest = False
+    if not isinstance(auto_dormant_threshold, int):
+        auto_dormant_threshold = 5
 
     init_db(db_path)
 
+    if list_dormant:
+        dormant_entries = get_dormant_companies_entries(db_path)
+        render_dormant_companies(dormant_entries)
+        raise typer.Exit()
+
+    if reactivate_comp:
+        reactivate_company(reactivate_comp, db_path)
+        console.print(f"[bold green][+][/bold green] Reactivated company [cyan]{reactivate_comp}[/cyan].")
+
     target_companies = COMPANIES
+    dormant_names = get_dormant_company_names(db_path)
+    if not company:
+        target_companies = [c for c in target_companies if c.name.lower().strip() not in dormant_names]
     if provider:
         provider_norm = provider.strip().lower()
         target_companies = [
@@ -269,6 +303,15 @@ def scan(
         all_jobs = [j for j in all_jobs if (getattr(j, "relevance_score", 0) or 0) >= min_score]
 
     all_jobs.sort(key=lambda j: (getattr(j, "relevance_score", 0) or 0), reverse=True)
+
+    company_match_counts: dict[str, int] = {}
+    for j in all_jobs:
+        cname = j.company.lower().strip()
+        company_match_counts[cname] = company_match_counts.get(cname, 0) + 1
+
+    for c in target_companies:
+        cnt = company_match_counts.get(c.name.lower().strip(), 0)
+        record_company_scan_activity(c.name, cnt, auto_dormant_threshold=auto_dormant_threshold, db_path=db_path)
 
     new_jobs, existing_jobs = filter_new_jobs(all_jobs, db_path)
 
@@ -504,6 +547,38 @@ def stale_command(
             export_json(stale_postings, json_path)
         if csv_path:
             export_csv(stale_postings, csv_path)
+
+
+@app.command("dormant")
+def dormant_command(
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+) -> None:
+    """List registered dormant / paused companies."""
+    init_db(db_path)
+    entries = get_dormant_companies_entries(db_path)
+    render_dormant_companies(entries)
+
+
+@app.command("reactivate")
+def reactivate_command(
+    company: str = typer.Argument(
+        ...,
+        help="Company name to reactivate from dormant registry.",
+    ),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+) -> None:
+    """Reactivate a dormant company to resume monitoring."""
+    init_db(db_path)
+    reactivate_company(company, db_path)
+    console.print(f"[bold green][+][/bold green] Reactivated company [cyan]{company}[/cyan] in scanning registry.")
 
 
 @app.command("apply")
@@ -952,6 +1027,21 @@ def main(
         "--digest",
         help="Batch alerts into a single consolidated daily digest message.",
     ),
+    list_dormant: bool = typer.Option(
+        False,
+        "--list-dormant",
+        help="Display registered dormant / paused companies and exit.",
+    ),
+    reactivate_comp: Optional[str] = typer.Option(
+        None,
+        "--reactivate",
+        help="Reactivate a dormant company so it is monitored in scans.",
+    ),
+    auto_dormant_threshold: int = typer.Option(
+        5,
+        "--auto-dormant-threshold",
+        help="Number of consecutive scans with 0 matches before auto-marking a company dormant (0 to disable).",
+    ),
     stats: bool = typer.Option(
         False,
         "--stats",
@@ -1003,6 +1093,9 @@ def main(
             new_only=new_only,
             min_score=min_score,
             digest=digest,
+            list_dormant=list_dormant,
+            reactivate_comp=reactivate_comp,
+            auto_dormant_threshold=auto_dormant_threshold,
             stats=stats,
             db_path=db_path,
             notify_discord=notify_discord,

@@ -300,3 +300,41 @@ def render_stale_applications(stale_jobs: list[dict[str, Any]], days: int = 7) -
             f"  {display_id}. [bold white]{j.get('company')}[/bold white] - [cyan]{j.get('title')}[/cyan]\n"
             f"     [bold underline blue]{eff_url}[/bold underline blue] [dim]({label})[/dim]{fallback_msg}"
         )
+
+
+def render_dormant_companies(entries: list[dict[str, Any]]) -> None:
+    """Render list of paused / dormant companies."""
+    if not entries:
+        console.print(
+            Panel(
+                "[bold green]No dormant companies found![/bold green]\n\n"
+                "[dim]All registered target companies are currently active in the scanning radar.[/dim]",
+                title="[bold cyan]Dormant Companies Registry[/bold cyan]",
+                border_style="green",
+                padding=(1, 2),
+            )
+        )
+        return
+
+    table = Table(
+        title=f"[bold yellow]Dormant / Paused Companies ({len(entries)})[/bold yellow]",
+        box=box.ROUNDED,
+        header_style="bold magenta",
+    )
+    table.add_column("Company", style="bold white", no_wrap=True)
+    table.add_column("Reason", style="yellow")
+    table.add_column("Zero-Match Scans", justify="right", style="cyan")
+    table.add_column("Paused Date", style="dim")
+    table.add_column("Notes", style="dim")
+
+    for entry in entries:
+        table.add_row(
+            str(entry.get("company_name", "")),
+            str(entry.get("reason", "") or "-"),
+            str(entry.get("consecutive_zero_scans", 0)),
+            str(entry.get("paused_at", ""))[:10] if entry.get("paused_at") else "-",
+            str(entry.get("notes", "") or "-"),
+        )
+
+    console.print(table)
+    console.print("\n[dim]To reactivate any company, run: [cyan]gcc-job-radar reactivate <company_name>[/cyan][/dim]\n")

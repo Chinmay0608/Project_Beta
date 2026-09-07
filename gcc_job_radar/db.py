@@ -276,6 +276,28 @@ def init_db(db_path: Optional[Path] = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_seen_emails_uid ON seen_emails(uid);
             """
         )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dormant_companies (
+                company_name TEXT PRIMARY KEY,
+                reason TEXT,
+                paused_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                consecutive_zero_scans INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 0,
+                notes TEXT
+            );
+            """
+        )
+        from gcc_job_radar.dormant_companies import DORMANT_REGISTRY
+        for entry in DORMANT_REGISTRY:
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO dormant_companies (company_name, reason, paused_at, consecutive_zero_scans, is_active, notes)
+                VALUES (?, ?, ?, 0, 0, ?)
+                """,
+                (entry.config.name, entry.reason, entry.paused_at, entry.notes),
+            )
         conn.commit()
 
     # Clean up any existing duplicate entries
@@ -1258,4 +1280,144 @@ def record_seen_email_uids(
             clean_keys,
         )
         conn.commit()
+
+
+def record_company_scan_activity(
+    company_name: str,
+    jobs_found: int,
+    auto_dormant_threshold: int = 5,
+    db_path: Optional[Path] = None,
+) -> bool:
+    """Track scan match activity for a company and mark dormant if consecutive zero matches reach threshold.
+
+    Returns True if company was transitioned to dormant.
+    """
+    if not company_name or not company_name.strip():
+        return False
+
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+    comp_norm = company_name.strip()
+    transitioned_dormant = False
+
+    with sqlite3.connect(target_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT consecutive_zero_scans, is_active FROM dormant_companies WHERE lower(company_name) = lower(?)",
+            (comp_norm,),
+        )
+        row = cursor.fetchone()
+
+        if jobs_found > 0:
+            if row:
+                cursor.execute(
+                    "UPDATE dormant_companies SET consecutive_zero_scans = 0 WHERE lower(company_name) = lower(?)",
+                    (comp_norm,),
+                )
+        else:
+            current_zero = row[0] if row else 0
+            is_active = row[1] if row else 1
+            new_zero = current_zero + 1
+
+            if auto_dormant_threshold > 0 and new_zero >= auto_dormant_threshold and is_active == 1:
+                reason = f"Auto-dormant: {new_zero} consecutive scans with 0 matching entry-level openings"
+                cursor.execute(
+                    """
+                    INSERT INTO dormant_companies (company_name, reason, paused_at, consecutive_zero_scans, is_active, notes)
+                    VALUES (?, ?, CURRENT_TIMESTAMP, ?, 0, 'Auto-paused after consecutive zero-match scans')
+                    ON CONFLICT(company_name) DO UPDATE SET
+                        consecutive_zero_scans = excluded.consecutive_zero_scans,
+                        is_active = 0,
+                        reason = excluded.reason,
+                        paused_at = CURRENT_TIMESTAMP
+                    """,
+                    (comp_norm, reason, new_zero),
+                )
+                transitioned_dormant = True
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO dormant_companies (company_name, reason, paused_at, consecutive_zero_scans, is_active, notes)
+                    VALUES (?, 'Tracking activity', CURRENT_TIMESTAMP, ?, 1, NULL)
+                    ON CONFLICT(company_name) DO UPDATE SET
+                        consecutive_zero_scans = excluded.consecutive_zero_scans
+                    """,
+                    (comp_norm, new_zero),
+                )
+        conn.commit()
+
+    return transitioned_dormant
+
+
+def get_dormant_company_names(db_path: Optional[Path] = None) -> set[str]:
+    """Retrieve all company names (lowercase) currently marked as dormant."""
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+
+    from gcc_job_radar.dormant_companies import DORMANT_COMPANIES
+    dormant_names = {c.name.strip().lower() for c in DORMANT_COMPANIES}
+
+    with sqlite3.connect(target_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT lower(company_name) FROM dormant_companies WHERE is_active = 0"
+        )
+        for r in cursor.fetchall():
+            dormant_names.add(r[0])
+
+        # Respect if any were explicitly reactivated (is_active = 1)
+        cursor.execute(
+            "SELECT lower(company_name) FROM dormant_companies WHERE is_active = 1"
+        )
+        reactivated = {r[0] for r in cursor.fetchall()}
+        dormant_names -= reactivated
+
+    return dormant_names
+
+
+def get_dormant_companies_entries(db_path: Optional[Path] = None) -> list[dict[str, Any]]:
+    """Retrieve full metadata for all dormant companies."""
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+
+    with sqlite3.connect(target_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT company_name, reason, paused_at, consecutive_zero_scans, is_active, notes
+            FROM dormant_companies
+            WHERE is_active = 0
+            ORDER BY company_name ASC
+            """
+        )
+        rows = [dict(r) for r in cursor.fetchall()]
+
+    return rows
+
+
+def reactivate_company(company_name: str, db_path: Optional[Path] = None) -> bool:
+    """Reactivate a dormant company, resetting zero counts and marking active."""
+    if not company_name or not company_name.strip():
+        return False
+
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+    comp_norm = company_name.strip()
+
+    with sqlite3.connect(target_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO dormant_companies (company_name, reason, paused_at, consecutive_zero_scans, is_active, notes)
+            VALUES (?, 'Reactivated by user', CURRENT_TIMESTAMP, 0, 1, 'Manually reactivated')
+            ON CONFLICT(company_name) DO UPDATE SET
+                is_active = 1,
+                consecutive_zero_scans = 0,
+                notes = 'Manually reactivated'
+            """,
+            (comp_norm,),
+        )
+        conn.commit()
+        return True
 

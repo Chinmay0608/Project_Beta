@@ -10,6 +10,10 @@ on:
         description: 'Optional company name or token to filter scan'
         required: false
         default: ''
+      digest:
+        description: 'Batch alerts into a single consolidated daily digest message (--digest)'
+        required: false
+        default: 'false'
 
 permissions:
   contents: read
@@ -47,10 +51,14 @@ jobs:
 
       - name: Run GCC Job Radar Scan
         run: |
+          SCAN_ARGS="--new-only --json latest_openings.json"
+          if [ "${{ github.event.inputs.digest }}" = "true" ] || [ "${{ github.event_name }}" = "schedule" ]; then
+            SCAN_ARGS="$SCAN_ARGS --digest"
+          fi
           if [ -n "${{ github.event.inputs.company }}" ]; then
-            gcc-job-radar --company "${{ github.event.inputs.company }}" --new-only --json latest_openings.json
+            gcc-job-radar --company "${{ github.event.inputs.company }}" $SCAN_ARGS
           else
-            gcc-job-radar --new-only --json latest_openings.json
+            gcc-job-radar $SCAN_ARGS
           fi
 
       - name: Upload latest openings artifact

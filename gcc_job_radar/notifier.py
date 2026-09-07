@@ -257,12 +257,164 @@ async def send_telegram_notification(
     return success
 
 
+def group_jobs_by_company(jobs: list[JobPosting]) -> list[tuple[str, list[JobPosting]]]:
+    """Group jobs by company, sorted by highest relevance score first."""
+    groups: dict[str, list[JobPosting]] = {}
+    for j in jobs:
+        comp = j.company
+        if comp not in groups:
+            groups[comp] = []
+        groups[comp].append(j)
+
+    # Sort jobs within each company by relevance_score DESC
+    for comp in groups:
+        groups[comp].sort(key=lambda j: (getattr(j, "relevance_score", 0) or 0), reverse=True)
+
+    # Sort companies by top job relevance score DESC, then company name
+    sorted_companies = sorted(
+        groups.items(),
+        key=lambda item: (getattr(item[1][0], "relevance_score", 0) or 0, item[0]),
+        reverse=True,
+    )
+    return sorted_companies
+
+
+async def send_discord_digest(
+    webhook_url: str,
+    jobs: list[JobPosting],
+    client: httpx.AsyncClient,
+) -> bool:
+    """Send a consolidated daily digest embed to Discord grouped by company and sorted by relevance score."""
+    webhook_url = webhook_url.strip() if webhook_url else ""
+    if not webhook_url or not jobs:
+        return False
+
+    grouped = group_jobs_by_company(jobs)
+    embeds: list[dict[str, Any]] = []
+    current_embed: dict[str, Any] = {
+        "title": f"📬 GCC Job Radar — Daily Digest ({len(jobs)} openings)",
+        "color": DISCORD_EMBED_COLOR,
+        "fields": [],
+        "footer": {"text": "GCC Job Radar • India Tech Daily Digest"},
+    }
+
+    for comp, comp_jobs in grouped:
+        lines = []
+        for j in comp_jobs:
+            score = getattr(j, "relevance_score", 0) or 0
+            eff_url, _, label = resolve_effective_apply_url(j)
+            score_prefix = f"`[{score} pts]` " if score > 0 else ""
+            lines.append(f"• {score_prefix}[{j.title}]({eff_url}) — *{j.location}*")
+
+        field_value = "\n".join(lines)
+        if len(field_value) > 1024:
+            field_value = field_value[:1020] + "..."
+
+        if len(current_embed["fields"]) >= 25:
+            embeds.append(current_embed)
+            current_embed = {
+                "title": "📬 GCC Job Radar — Daily Digest (Continued)",
+                "color": DISCORD_EMBED_COLOR,
+                "fields": [],
+                "footer": {"text": "GCC Job Radar • India Tech Daily Digest"},
+            }
+
+        current_embed["fields"].append({
+            "name": f"🏢 {comp} ({len(comp_jobs)})",
+            "value": field_value,
+            "inline": False,
+        })
+
+    if current_embed["fields"]:
+        embeds.append(current_embed)
+
+    success = True
+    for i in range(0, len(embeds), 5):
+        chunk = embeds[i : i + 5]
+        payload = {
+            "content": "⚡ **Daily Entry-Level Tech Digest Ready!**" if i == 0 else "",
+            "embeds": chunk,
+        }
+        try:
+            resp = await client.post(webhook_url, json=payload)
+            if resp.status_code not in (200, 204):
+                logger.warning("Discord digest webhook returned status %s: %s", resp.status_code, resp.text)
+                success = False
+        except Exception as exc:
+            logger.warning("Failed to send Discord digest webhook: %s", exc)
+            success = False
+
+    return success
+
+
+async def send_telegram_digest(
+    bot_token: str,
+    chat_id: str | int,
+    jobs: list[JobPosting],
+    client: httpx.AsyncClient,
+) -> bool:
+    """Send a consolidated daily digest message to Telegram grouped by company and sorted by relevance score."""
+    bot_token = bot_token.strip() if bot_token else ""
+    chat_id = str(chat_id).strip() if chat_id else ""
+    if not bot_token or not chat_id or not jobs:
+        return False
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    grouped = group_jobs_by_company(jobs)
+
+    header = f"📬 <b>GCC Job Radar — Daily Digest ({len(jobs)} openings)</b>\n\n"
+    company_blocks = []
+
+    for comp, comp_jobs in grouped:
+        comp_lines = [f"🏢 <b>{html.escape(comp)}</b>"]
+        for j in comp_jobs:
+            score = getattr(j, "relevance_score", 0) or 0
+            score_badge = f"<code>[{score} pts]</code> " if score > 0 else ""
+            eff_url, _, _ = resolve_effective_apply_url(j)
+            comp_lines.append(
+                f"  • {score_badge}<a href=\"{html.escape(str(eff_url))}\">{html.escape(j.title)}</a> — <i>{html.escape(j.location)}</i>"
+            )
+        company_blocks.append("\n".join(comp_lines))
+
+    chunks = []
+    current_chunk = header
+    for block in company_blocks:
+        if len(current_chunk) + len(block) > 3800:
+            chunks.append(current_chunk)
+            current_chunk = block + "\n\n"
+        else:
+            current_chunk += block + "\n\n"
+
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+
+    success = True
+    for chunk in chunks:
+        payload = {
+            "chat_id": chat_id,
+            "text": chunk.strip(),
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        try:
+            resp = await client.post(url, json=payload)
+            if resp.status_code != 200:
+                logger.warning("Telegram Bot API digest returned status %s: %s", resp.status_code, resp.text)
+                success = False
+        except Exception as exc:
+            logger.warning("Failed to send Telegram digest: %s", exc)
+            success = False
+
+    return success
+
+
 async def dispatch_notifications(
     new_jobs: list[JobPosting],
     discord_webhook: Optional[str] = None,
     telegram_token: Optional[str] = None,
     telegram_chat_id: Optional[str] = None,
     db_path: Optional[os.PathLike] = None,
+    digest: bool = False,
 ) -> None:
     """Dispatch notifications to configured channels for new postings, preventing duplicates."""
     if not new_jobs:
@@ -283,10 +435,15 @@ async def dispatch_notifications(
             # Filter out jobs already alerted to Discord
             discord_jobs = filter_unalerted_jobs(new_jobs, "discord", db_path)
             if discord_jobs:
-                ok = await send_discord_notification(discord_url, discord_jobs, client)
+                if digest:
+                    ok = await send_discord_digest(discord_url, discord_jobs, client)
+                    label = "digest"
+                else:
+                    ok = await send_discord_notification(discord_url, discord_jobs, client)
+                    label = "alert"
                 if ok:
                     record_dispatched_alerts(discord_jobs, "discord", db_path)
-                    console.print(f"[bold green][+][/bold green] Sent Discord alert for {len(discord_jobs)} new posting(s).")
+                    console.print(f"[bold green][+][/bold green] Sent Discord {label} for {len(discord_jobs)} new posting(s).")
                 else:
                     console.print("[bold red][!][/bold red] Failed to send Discord notification.")
 
@@ -294,9 +451,14 @@ async def dispatch_notifications(
             # Filter out jobs already alerted to Telegram
             telegram_jobs = filter_unalerted_jobs(new_jobs, "telegram", db_path)
             if telegram_jobs:
-                ok = await send_telegram_notification(tg_token, tg_chat, telegram_jobs, client)
+                if digest:
+                    ok = await send_telegram_digest(tg_token, tg_chat, telegram_jobs, client)
+                    label = "digest"
+                else:
+                    ok = await send_telegram_notification(tg_token, tg_chat, telegram_jobs, client)
+                    label = "alert"
                 if ok:
                     record_dispatched_alerts(telegram_jobs, "telegram", db_path)
-                    console.print(f"[bold green][+][/bold green] Sent Telegram alert for {len(telegram_jobs)} new posting(s).")
+                    console.print(f"[bold green][+][/bold green] Sent Telegram {label} for {len(telegram_jobs)} new posting(s).")
                 else:
                     console.print("[bold red][!][/bold red] Failed to send Telegram notification.")

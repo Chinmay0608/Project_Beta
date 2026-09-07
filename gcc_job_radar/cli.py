@@ -136,6 +136,11 @@ def scan(
         "-m",
         help="Filter out jobs with relevance score below this threshold (0-100).",
     ),
+    digest: bool = typer.Option(
+        False,
+        "--digest",
+        help="Batch alerts into a single consolidated daily digest message.",
+    ),
     stats: bool = typer.Option(
         False,
         "--stats",
@@ -190,6 +195,8 @@ def scan(
         remote_only = False
     if not isinstance(min_score, int):
         min_score = 0
+    if not isinstance(digest, bool):
+        digest = False
 
     init_db(db_path)
 
@@ -286,6 +293,7 @@ def scan(
                 telegram_token=notify_telegram_token,
                 telegram_chat_id=notify_telegram_chat,
                 db_path=db_path,
+                digest=digest,
             )
         )
 
@@ -939,6 +947,11 @@ def main(
         "-m",
         help="Filter out jobs with relevance score below this threshold (0-100).",
     ),
+    digest: bool = typer.Option(
+        False,
+        "--digest",
+        help="Batch alerts into a single consolidated daily digest message.",
+    ),
     stats: bool = typer.Option(
         False,
         "--stats",
@@ -989,6 +1002,7 @@ def main(
             remote_only=remote_only,
             new_only=new_only,
             min_score=min_score,
+            digest=digest,
             stats=stats,
             db_path=db_path,
             notify_discord=notify_discord,

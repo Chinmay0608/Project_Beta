@@ -54,8 +54,9 @@ class JobPosting(BaseModel):
     applied_at: Optional[str] = None
     notes: Optional[str] = None
     direct_search_url: Optional[str] = None
+    relevance_score: Optional[int] = 0
 
 
-# Backward and forward compatible alias
+# Backward compatible alias referenced in legacy tests and scripts
 JobOpening = JobPosting
 

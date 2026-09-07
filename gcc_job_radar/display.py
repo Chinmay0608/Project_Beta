@@ -69,6 +69,7 @@ def render_results(jobs: list[JobPosting], is_new_only: bool = False) -> None:
     )
 
     table.add_column("ID", style="bold green", justify="right", no_wrap=True)
+    table.add_column("Score", justify="right", no_wrap=True)
     table.add_column("Company", style="bold white", no_wrap=True)
     table.add_column("Position", style="cyan")
     table.add_column("Location", style="yellow")
@@ -95,11 +96,22 @@ def render_results(jobs: list[JobPosting], is_new_only: bool = False) -> None:
             loc_display = loc_str
 
         display_id = str(getattr(job, "numeric_id", None) or idx)
+        score_val = getattr(job, "relevance_score", 0) or 0
+        if score_val >= 70:
+            score_styled = f"[bold green]{score_val}[/bold green]"
+        elif score_val >= 40:
+            score_styled = f"[bold yellow]{score_val}[/bold yellow]"
+        elif score_val > 0:
+            score_styled = f"[cyan]{score_val}[/cyan]"
+        else:
+            score_styled = "[dim]0[/dim]"
+
         apply_url_str = str(job.apply_url)
         hyperlink = f"[link={apply_url_str}][underline]{apply_url_str}[/underline][/link]"
 
         row_cells = [
             display_id,
+            score_styled,
             job.company,
             job.title,
             loc_display,
@@ -136,6 +148,8 @@ def render_results(jobs: list[JobPosting], is_new_only: bool = False) -> None:
     console.print("\n[bold cyan]Direct Apply Links:[/bold cyan]")
     for idx, job in enumerate(jobs, start=1):
         display_id = str(getattr(job, "numeric_id", None) or idx)
+        score_val = getattr(job, "relevance_score", 0) or 0
+        score_tag = f"[bold green]{score_val} pts[/bold green]" if score_val >= 70 else f"[yellow]{score_val} pts[/yellow]" if score_val >= 40 else f"[dim]{score_val} pts[/dim]"
         effective_url, direct_search, label = resolve_effective_apply_url(job)
         fallback_msg = (
             f"\n     [dim]Direct search fallback:[/dim] [cyan]{direct_search}[/cyan]"
@@ -143,7 +157,7 @@ def render_results(jobs: list[JobPosting], is_new_only: bool = False) -> None:
             else ""
         )
         console.print(
-            f"  {display_id}. [bold white]{job.company}[/bold white] - [cyan]{job.title}[/cyan]\n"
+            f"  {display_id}. [{score_tag}] [bold white]{job.company}[/bold white] - [cyan]{job.title}[/cyan]\n"
             f"     [bold underline blue]{effective_url}[/bold underline blue] [dim]({label})[/dim]{fallback_msg}"
         )
     label = "new" if is_new_only else "active"

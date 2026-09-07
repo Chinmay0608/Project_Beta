@@ -22,7 +22,7 @@ from gcc_job_radar.db import (
     query_jobs,
     record_jobs,
 )
-from gcc_job_radar.engine import scan_all_companies
+from gcc_job_radar.scanner import scan_all_companies
 
 logger = logging.getLogger(__name__)
 

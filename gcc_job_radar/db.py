@@ -181,6 +181,7 @@ def init_db(db_path: Optional[Path] = None) -> None:
                 applied_at TIMESTAMP NULL,
                 notes TEXT NULL,
                 direct_search_url TEXT NULL,
+                relevance_score INTEGER DEFAULT 0,
                 first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -204,6 +205,8 @@ def init_db(db_path: Optional[Path] = None) -> None:
                     cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN notes TEXT NULL")
                 if "direct_search_url" not in columns:
                     cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN direct_search_url TEXT NULL")
+                if "relevance_score" not in columns:
+                    cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN relevance_score INTEGER DEFAULT 0")
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_seen_jobs_status ON seen_jobs(status);")
         # Recreate jobs view to expose direct_search_url and rowid as numeric_id
@@ -456,11 +459,16 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
             seen_urls.add(url_key)
             deduped_batch.append((j, clean_url))
 
+        from gcc_job_radar.relevance import score_job_posting
+
         for job, clean_url in deduped_batch:
             job_key = make_job_key(job)
             comp_lower = job.company.lower().strip()
             title_lower = job.title.lower().strip()
             loc_lower = job.location.lower().strip()
+            job_score = getattr(job, "relevance_score", None)
+            if job_score is None or job_score == 0:
+                job_score = score_job_posting(job)
 
             cursor.execute(
                 """
@@ -524,7 +532,8 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                         is_active = 1,
                         is_remote = ?,
                         status = ?,
-                        direct_search_url = COALESCE(?, direct_search_url)
+                        direct_search_url = COALESCE(?, direct_search_url),
+                        relevance_score = ?
                     WHERE id = ?
                     """,
                     (
@@ -537,6 +546,7 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                         1 if job.is_remote else 0,
                         target_status,
                         getattr(job, "direct_search_url", None),
+                        job_score,
                         matched_id,
                     ),
                 )
@@ -544,9 +554,9 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                 cursor.execute(
                     """
                     INSERT INTO seen_jobs (
-                        id, company, title, location, apply_url, provider, published_date, is_active, is_remote, status, applied_at, notes, direct_search_url, first_seen_at, last_seen_at
+                        id, company, title, location, apply_url, provider, published_date, is_active, is_remote, status, applied_at, notes, direct_search_url, relevance_score, first_seen_at, last_seen_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ON CONFLICT(id) DO UPDATE SET
                         last_seen_at = CURRENT_TIMESTAMP,
                         company = excluded.company,
@@ -556,7 +566,8 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                         published_date = excluded.published_date,
                         is_active = 1,
                         is_remote = excluded.is_remote,
-                        direct_search_url = COALESCE(excluded.direct_search_url, seen_jobs.direct_search_url)
+                        direct_search_url = COALESCE(excluded.direct_search_url, seen_jobs.direct_search_url),
+                        relevance_score = excluded.relevance_score
                     """,
                     (
                         job_key,
@@ -571,19 +582,20 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                         getattr(job, "applied_at", None),
                         getattr(job, "notes", None),
                         getattr(job, "direct_search_url", None),
+                        job_score,
                     ),
                 )
 
         conn.commit()
 
-        # Attach persisted database rowid, status, applied_at, notes, and direct_search_url back to the JobPosting instances
+        # Attach persisted database rowid, status, applied_at, notes, direct_search_url, and relevance_score back to the JobPosting instances
         cursor.execute(
-            "SELECT rowid, id, lower(apply_url), lower(company), lower(title), lower(location), status, applied_at, notes, direct_search_url FROM seen_jobs"
+            "SELECT rowid, id, lower(apply_url), lower(company), lower(title), lower(location), status, applied_at, notes, direct_search_url, relevance_score FROM seen_jobs"
         )
         rows = cursor.fetchall()
-        id_map = {r[1]: (r[0], r[6], r[7], r[8], r[9]) for r in rows}
-        url_map = {r[2]: (r[0], r[6], r[7], r[8], r[9]) for r in rows if r[2]}
-        role_map = {(r[3], r[4], r[5]): (r[0], r[6], r[7], r[8], r[9]) for r in rows}
+        id_map = {r[1]: (r[0], r[6], r[7], r[8], r[9], r[10]) for r in rows}
+        url_map = {r[2]: (r[0], r[6], r[7], r[8], r[9], r[10]) for r in rows if r[2]}
+        role_map = {(r[3], r[4], r[5]): (r[0], r[6], r[7], r[8], r[9], r[10]) for r in rows}
 
         for j in jobs:
             clean_u = canonicalize_url(str(j.apply_url)).lower()
@@ -599,6 +611,7 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                 setattr(j, "applied_at", meta[2])
                 setattr(j, "notes", meta[3])
                 setattr(j, "direct_search_url", meta[4])
+                setattr(j, "relevance_score", meta[5] if meta[5] is not None else 0)
 
 
 def get_stats(db_path: Optional[Path] = None) -> dict[str, Any]:
@@ -667,18 +680,18 @@ def get_latest_jobs(
         cursor = conn.cursor()
         cursor.execute(
             f"""
-            SELECT rowid AS numeric_id, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, direct_search_url, first_seen_at, last_seen_at
+            SELECT rowid AS numeric_id, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, direct_search_url, relevance_score, first_seen_at, last_seen_at
             FROM (
-                SELECT rowid, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, direct_search_url, first_seen_at, last_seen_at,
+                SELECT rowid, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, direct_search_url, relevance_score, first_seen_at, last_seen_at,
                        ROW_NUMBER() OVER (
                            PARTITION BY lower(company), lower(title), lower(location)
-                           ORDER BY last_seen_at DESC, first_seen_at DESC
+                           ORDER BY relevance_score DESC, last_seen_at DESC, first_seen_at DESC
                        ) as rn
                 FROM seen_jobs
                 {inner_where}
             )
             WHERE rn = 1
-            ORDER BY last_seen_at DESC, first_seen_at DESC
+            ORDER BY relevance_score DESC, last_seen_at DESC, first_seen_at DESC
             LIMIT ?
             """,
             params + [max(1, limit)],
@@ -693,6 +706,7 @@ def query_jobs(
     company: Optional[str] = None,
     is_remote: Optional[bool] = None,
     status: Optional[str] = "NEW",
+    min_score: Optional[int] = None,
     limit: int = 5,
     db_path: Optional[Path] = None,
 ) -> list[dict[str, Any]]:
@@ -708,6 +722,10 @@ def query_jobs(
         if stat_norm != "ALL":
             inner_where += " AND UPPER(status) = ?"
             params.append(stat_norm)
+
+    if min_score is not None and min_score > 0:
+        inner_where += " AND relevance_score >= ?"
+        params.append(min_score)
 
     if company and company.strip():
         inner_where += " AND company LIKE ?"
@@ -735,18 +753,18 @@ def query_jobs(
             params.append(f"%{loc_str}%")
 
     query = f"""
-        SELECT rowid AS numeric_id, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, direct_search_url, first_seen_at, last_seen_at
+        SELECT rowid AS numeric_id, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, direct_search_url, relevance_score, first_seen_at, last_seen_at
         FROM (
-            SELECT rowid, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, direct_search_url, first_seen_at, last_seen_at,
+            SELECT rowid, id, company, title, location, apply_url, provider, published_date, is_remote, status, applied_at, notes, direct_search_url, relevance_score, first_seen_at, last_seen_at,
                    ROW_NUMBER() OVER (
                        PARTITION BY lower(company), lower(title), lower(location)
-                       ORDER BY last_seen_at DESC, first_seen_at DESC
+                       ORDER BY relevance_score DESC, last_seen_at DESC, first_seen_at DESC
                    ) as rn
             FROM seen_jobs
             {inner_where}
         )
         WHERE rn = 1
-        ORDER BY last_seen_at DESC, first_seen_at DESC
+        ORDER BY relevance_score DESC, last_seen_at DESC, first_seen_at DESC
         LIMIT ?
     """
     params.append(max(1, limit))

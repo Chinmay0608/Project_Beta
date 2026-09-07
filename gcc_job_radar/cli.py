@@ -27,10 +27,11 @@ from gcc_job_radar.db import (
     record_jobs,
 )
 from gcc_job_radar.display import console, render_banner, render_results, render_stats
-from gcc_job_radar.engine import scan_all_companies
+from gcc_job_radar.scanner import scan_all_companies
 from gcc_job_radar.filters import is_remote_opening
 from gcc_job_radar.models import ATSProvider, JobPosting
 from gcc_job_radar.notifier import dispatch_notifications
+from gcc_job_radar.relevance import score_job_posting
 
 app = typer.Typer(
     name="gcc-job-radar",
@@ -62,6 +63,7 @@ def export_csv(jobs: list[JobPosting], path: Path) -> None:
                 "published_date",
                 "provider",
                 "is_remote",
+                "relevance_score",
                 "id",
                 "status",
                 "notes",
@@ -79,10 +81,11 @@ def export_csv(jobs: list[JobPosting], path: Path) -> None:
                     "published_date": job.published_date or "Active",
                     "provider": job.provider.value,
                     "is_remote": job.is_remote,
+                    "relevance_score": getattr(job, "relevance_score", 0) or 0,
                     "id": getattr(job, "numeric_id", None) or job.id,
                     "status": getattr(job, "status", "NEW"),
-                    "notes": getattr(job, "notes", "") or "",
-                    "direct_search_url": getattr(job, "direct_search_url", "") or "",
+                    "notes": getattr(job, "notes", None) or "",
+                    "direct_search_url": getattr(job, "direct_search_url", None) or "",
                 }
             )
     console.print(f"[bold green][+][/bold green] Exported {len(jobs)} postings to CSV: [cyan]{path}[/cyan]")
@@ -119,6 +122,12 @@ def scan(
         "--new-only",
         "-n",
         help="Only display and export postings not seen in previous runs.",
+    ),
+    min_score: int = typer.Option(
+        0,
+        "--min-score",
+        "-m",
+        help="Filter out jobs with relevance score below this threshold (0-100).",
     ),
     stats: bool = typer.Option(
         False,
@@ -172,6 +181,8 @@ def scan(
         concurrency = 30
     if not isinstance(remote_only, bool):
         remote_only = False
+    if not isinstance(min_score, int):
+        min_score = 0
 
     init_db(db_path)
 
@@ -236,6 +247,14 @@ def scan(
 
     if remote_only:
         all_jobs = [j for j in all_jobs if getattr(j, "is_remote", False) or is_remote_opening(j)]
+
+    for j in all_jobs:
+        score_job_posting(j)
+
+    if min_score > 0:
+        all_jobs = [j for j in all_jobs if (getattr(j, "relevance_score", 0) or 0) >= min_score]
+
+    all_jobs.sort(key=lambda j: (getattr(j, "relevance_score", 0) or 0), reverse=True)
 
     new_jobs, existing_jobs = filter_new_jobs(all_jobs, db_path)
 
@@ -310,6 +329,12 @@ def list_jobs(
         "-r",
         help="Only list 100% remote roles eligible in India.",
     ),
+    min_score: int = typer.Option(
+        0,
+        "--min-score",
+        "-m",
+        help="Filter listed jobs by minimum relevance score (0-100).",
+    ),
     limit: int = typer.Option(
         25,
         "--limit",
@@ -337,12 +362,15 @@ def list_jobs(
     init_db(db_path)
     if not isinstance(remote_only, bool):
         remote_only = False
+    if not isinstance(min_score, int):
+        min_score = 0
 
     jobs_dict = query_jobs(
         company=company,
         title_keyword=title,
         is_remote=True if remote_only else None,
         status=status,
+        min_score=min_score if min_score > 0 else None,
         limit=limit,
         db_path=db_path,
     )
@@ -364,10 +392,13 @@ def list_jobs(
                     applied_at=jd.get("applied_at"),
                     notes=jd.get("notes"),
                     direct_search_url=jd.get("direct_search_url"),
+                    relevance_score=jd.get("relevance_score", 0) or 0,
                 )
             )
         except Exception:
             continue
+
+    job_postings.sort(key=lambda j: (getattr(j, "relevance_score", 0) or 0), reverse=True)
 
     if remote_only:
         job_postings = [j for j in job_postings if getattr(j, "is_remote", False) or is_remote_opening(j)]
@@ -815,6 +846,12 @@ def main(
         "-n",
         help="Only display and export postings not seen in previous runs.",
     ),
+    min_score: int = typer.Option(
+        0,
+        "--min-score",
+        "-m",
+        help="Filter out jobs with relevance score below this threshold (0-100).",
+    ),
     stats: bool = typer.Option(
         False,
         "--stats",
@@ -864,6 +901,7 @@ def main(
             concurrency=concurrency,
             remote_only=remote_only,
             new_only=new_only,
+            min_score=min_score,
             stats=stats,
             db_path=db_path,
             notify_discord=notify_discord,

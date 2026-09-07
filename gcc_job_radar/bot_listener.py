@@ -26,7 +26,7 @@ from gcc_job_radar.db import (
     mark_job_status,
     record_jobs,
 )
-from gcc_job_radar.engine import scan_all_companies
+from gcc_job_radar.scanner import scan_all_companies
 from gcc_job_radar.link_resolver import resolve_effective_apply_url
 from gcc_job_radar.models import JobPosting
 from gcc_job_radar.notifier import build_job_inline_keyboard

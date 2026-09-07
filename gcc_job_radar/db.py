@@ -640,7 +640,7 @@ def get_stats(db_path: Optional[Path] = None) -> dict[str, Any]:
         )
         company_counts = dict(cursor.fetchall())
 
-        cursor.execute("SELECT status, COUNT(*) FROM seen_jobs GROUP BY status")
+        cursor.execute("SELECT UPPER(COALESCE(status, 'NEW')), COUNT(*) FROM seen_jobs GROUP BY UPPER(COALESCE(status, 'NEW'))")
         status_counts = dict(cursor.fetchall())
 
     return {
@@ -651,11 +651,73 @@ def get_stats(db_path: Optional[Path] = None) -> dict[str, Any]:
         "needs_resolve_count": status_counts.get("NEEDS_RESOLVE", 0),
         "dismissed_count": status_counts.get("DISMISSED", 0),
         "applied_count": status_counts.get("APPLIED", 0),
+        "interviewing_count": status_counts.get("INTERVIEWING", 0),
+        "rejected_count": status_counts.get("REJECTED", 0),
         "company_breakdown": company_counts,
         "first_recorded": first_recorded,
         "last_active": last_active,
         "db_path": str(target_path.resolve()),
     }
+
+
+def get_stale_applications(
+    days: int = 7,
+    db_path: Optional[Path] = None,
+) -> list[dict[str, Any]]:
+    """Retrieve jobs marked as APPLIED where applied_at is older than `days` ago."""
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+
+    with sqlite3.connect(target_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                rowid AS numeric_id,
+                id,
+                company,
+                title,
+                location,
+                apply_url,
+                direct_search_url,
+                applied_at,
+                notes,
+                relevance_score
+            FROM seen_jobs
+            WHERE UPPER(status) = 'APPLIED' AND applied_at IS NOT NULL
+            """
+        )
+        rows = cursor.fetchall()
+
+    now_utc = datetime.now(timezone.utc)
+    results = []
+    threshold = max(0, days)
+
+    for r in rows:
+        raw_applied = r["applied_at"]
+        elapsed_days = 0
+        if raw_applied:
+            try:
+                date_str = str(raw_applied).strip()
+                if date_str.endswith("Z"):
+                    dt = datetime.fromisoformat(date_str[:-1] + "+00:00")
+                else:
+                    dt = datetime.fromisoformat(date_str)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                elapsed_days = max(0, (now_utc - dt).days)
+            except Exception:
+                elapsed_days = 0
+
+        if elapsed_days >= threshold:
+            item = dict(r)
+            item["days_elapsed"] = elapsed_days
+            item["relevance_score"] = item.get("relevance_score") or 0
+            results.append(item)
+
+    results.sort(key=lambda x: x.get("days_elapsed", 0), reverse=True)
+    return results
 
 
 def get_latest_jobs(

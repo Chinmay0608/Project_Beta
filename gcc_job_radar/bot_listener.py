@@ -22,6 +22,7 @@ from gcc_job_radar.db import (
     get_job_by_id,
     get_jobs_by_status,
     get_latest_jobs,
+    get_stale_applications,
     get_stats,
     mark_job_status,
     record_jobs,
@@ -142,7 +143,8 @@ async def handle_command(
             "• <code>/check &lt;name&gt;</code> — Check single company\n"
             "• <code>/latest</code> — Show 5 recent openings\n"
             "• <code>/applied</code> — View your applied roles\n"
-            "• <code>/stats</code> — View database stats\n"
+            "• <code>/followups</code> — View pending follow-ups (applied &gt;= 7d)\n"
+            "• <code>/stats</code> — View database stats & pipeline\n"
             "• <code>/apply &lt;id/company&gt; [-n note]</code> — Mark job(s) as APPLIED\n"
             "• <code>/dismiss &lt;id(s)/company&gt;</code> — Dismiss job(s)\n"
             "• <code>/restore &lt;id(s)/company&gt;</code> — Restore job(s) to NEW\n"
@@ -160,6 +162,8 @@ async def handle_command(
         active = stats.get("active_count", 0)
         needs_resolve = stats.get("needs_resolve_count", 0)
         applied = stats.get("applied_count", 0)
+        interviewing = stats.get("interviewing_count", 0)
+        rejected = stats.get("rejected_count", 0)
         dismissed = stats.get("dismissed_count", 0)
         first_seen = stats.get("first_recorded") or "N/A"
         last_seen = stats.get("last_active") or "N/A"
@@ -169,9 +173,11 @@ async def handle_command(
             "📊 <b>GCC Job Radar - Database Statistics</b>\n\n"
             f"• <b>Total Roles Tracked:</b> {total}\n"
             f"• <b>Active (New):</b> {active}\n"
-            f"• <b>Needs Resolve:</b> {needs_resolve}\n"
             f"• <b>Applied:</b> {applied}\n"
+            f"• <b>Interviewing:</b> {interviewing}\n"
+            f"• <b>Rejected:</b> {rejected}\n"
             f"• <b>Dismissed:</b> {dismissed}\n"
+            f"• <b>Needs Resolve:</b> {needs_resolve}\n"
             f"• <b>First Recorded:</b> {first_seen}\n"
             f"• <b>Last Active:</b> {last_seen}\n\n"
         )
@@ -219,6 +225,36 @@ async def handle_command(
             )
         else:
             reply = format_jobs_html(applied_jobs, f"Your Applied Listings ({len(applied_jobs)})")
+        await send_telegram_reply(bot_token, chat_id, reply, client)
+
+    elif cmd in ("/followups", "/stale"):
+        days = 7
+        if arg and arg.isdigit():
+            days = int(arg)
+        stale_jobs = get_stale_applications(days=days, db_path=db_path)
+        if not stale_jobs:
+            reply = (
+                f"🎉 <b>No Stale Applications!</b>\n\n"
+                f"All your applied roles are either submitted under {days} days ago or updated.\n"
+                f"Keep up the momentum!"
+            )
+        else:
+            lines = [f"⏳ <b>Pending Follow-up (Applied &gt;= {days}d ago) — {len(stale_jobs)} role(s):</b>\n"]
+            for idx, j in enumerate(stale_jobs[:10], start=1):
+                jid = j.get("numeric_id") or j.get("id")
+                comp = html.escape(str(j.get("company", "")))
+                title = html.escape(str(j.get("title", "")))
+                elapsed = j.get("days_elapsed", 0)
+                applied_date = str(j.get("applied_at", ""))[:10]
+                eff_url, _, _ = resolve_effective_apply_url(j)
+                notes = j.get("notes")
+                notes_str = f" | <i>Note: {html.escape(str(notes))}</i>" if notes else ""
+                lines.append(
+                    f"{idx}. <b>{comp}</b> — {title} (#{jid})\n"
+                    f"   🗓️ Applied: <code>{applied_date}</code> (<b>{elapsed} days ago</b>){notes_str}\n"
+                    f"   🔗 <a href=\"{eff_url}\">Outreach / Portal Link</a>"
+                )
+            reply = "\n\n".join(lines)
         await send_telegram_reply(bot_token, chat_id, reply, client)
 
     elif cmd == "/check":

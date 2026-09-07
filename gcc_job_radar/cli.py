@@ -19,6 +19,7 @@ from gcc_job_radar.db import (
     filter_new_jobs,
     filter_unalerted_jobs,
     get_job_by_id,
+    get_stale_applications,
     get_stats,
     init_db,
     make_job_key,
@@ -26,7 +27,13 @@ from gcc_job_radar.db import (
     query_jobs,
     record_jobs,
 )
-from gcc_job_radar.display import console, render_banner, render_results, render_stats
+from gcc_job_radar.display import (
+    console,
+    render_banner,
+    render_results,
+    render_stale_applications,
+    render_stats,
+)
 from gcc_job_radar.scanner import scan_all_companies
 from gcc_job_radar.filters import is_remote_opening
 from gcc_job_radar.models import ATSProvider, JobPosting
@@ -335,6 +342,16 @@ def list_jobs(
         "-m",
         help="Filter listed jobs by minimum relevance score (0-100).",
     ),
+    stale: bool = typer.Option(
+        False,
+        "--stale",
+        help="List stale applications awaiting follow-up (applied >= 7 days ago).",
+    ),
+    stale_days: int = typer.Option(
+        7,
+        "--stale-days",
+        help="Threshold in days for stale applications follow-up.",
+    ),
     limit: int = typer.Option(
         25,
         "--limit",
@@ -364,6 +381,13 @@ def list_jobs(
         remote_only = False
     if not isinstance(min_score, int):
         min_score = 0
+    if not isinstance(stale_days, int):
+        stale_days = 7
+
+    if stale:
+        stale_results = get_stale_applications(days=stale_days, db_path=db_path)
+        render_stale_applications(stale_results, days=stale_days)
+        return
 
     jobs_dict = query_jobs(
         company=company,
@@ -409,6 +433,69 @@ def list_jobs(
         export_json(job_postings, json_path)
     if csv_path:
         export_csv(job_postings, csv_path)
+
+
+@app.command("stale")
+def stale_command(
+    days: int = typer.Option(
+        7,
+        "--days",
+        "-d",
+        help="Number of days since applied without status update to consider stale.",
+    ),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+    json_path: Optional[Path] = typer.Option(
+        None,
+        "--json",
+        "-j",
+        help="Path to export results to a JSON file.",
+    ),
+    csv_path: Optional[Path] = typer.Option(
+        None,
+        "--csv",
+        help="Path to export results to a CSV file.",
+    ),
+) -> None:
+    """List applications pending follow-up (applied >= N days ago)."""
+    init_db(db_path)
+    if not isinstance(days, int):
+        days = 7
+
+    stale_results = get_stale_applications(days=days, db_path=db_path)
+    render_stale_applications(stale_results, days=days)
+
+    if json_path or csv_path:
+        stale_postings: list[JobPosting] = []
+        for jd in stale_results:
+            try:
+                stale_postings.append(
+                    JobPosting(
+                        id=jd["id"],
+                        numeric_id=jd.get("numeric_id"),
+                        company=jd["company"],
+                        title=jd["title"],
+                        location=jd["location"],
+                        apply_url=jd["apply_url"],
+                        published_date="Applied",
+                        provider=ATSProvider(jd.get("provider", "greenhouse")) if jd.get("provider") in [p.value for p in ATSProvider] else ATSProvider.GREENHOUSE,
+                        is_remote=bool(jd.get("is_remote", False)),
+                        status=jd.get("status", "APPLIED"),
+                        applied_at=jd.get("applied_at"),
+                        notes=jd.get("notes"),
+                        direct_search_url=jd.get("direct_search_url"),
+                        relevance_score=jd.get("relevance_score", 0) or 0,
+                    )
+                )
+            except Exception:
+                continue
+        if json_path:
+            export_json(stale_postings, json_path)
+        if csv_path:
+            export_csv(stale_postings, csv_path)
 
 
 @app.command("apply")

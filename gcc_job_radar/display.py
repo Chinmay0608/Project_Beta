@@ -7,6 +7,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from gcc_job_radar.filters import is_remote_opening
+from gcc_job_radar.link_resolver import resolve_effective_apply_url
 from gcc_job_radar.models import JobPosting
 
 # Safe UTF-8 / Windows terminal console configuration
@@ -143,8 +144,6 @@ def render_results(jobs: list[JobPosting], is_new_only: bool = False) -> None:
     console.print(table)
 
     # Print explicit clickable URLs list for terminals that don't support table OSC 8 hyperlinks or truncate them
-    from gcc_job_radar.link_resolver import resolve_effective_apply_url
-
     console.print("\n[bold cyan]Direct Apply Links:[/bold cyan]")
     for idx, job in enumerate(jobs, start=1):
         display_id = str(getattr(job, "numeric_id", None) or idx)
@@ -191,6 +190,31 @@ def render_stats(stats: dict[str, Any]) -> None:
         )
     )
 
+    status_counts = stats.get("status_counts", {})
+    pipeline_table = Table(
+        title="[bold cyan]Application Pipeline Status[/bold cyan]",
+        box=box.SIMPLE,
+        header_style="bold magenta",
+    )
+    pipeline_table.add_column("Status", style="bold white")
+    pipeline_table.add_column("Count", style="green", justify="right")
+    pipeline_table.add_column("Percentage", style="yellow", justify="right")
+
+    pipeline_stages = [
+        ("NEW", "NEW (Unapplied)"),
+        ("APPLIED", "APPLIED (Awaiting Follow-up)"),
+        ("INTERVIEWING", "INTERVIEWING"),
+        ("REJECTED", "REJECTED"),
+        ("DISMISSED", "DISMISSED"),
+        ("NEEDS_RESOLVE", "NEEDS_RESOLVE"),
+    ]
+    for st, label in pipeline_stages:
+        cnt = status_counts.get(st, 0)
+        pct = f"{(cnt / total * 100):.1f}%" if total > 0 else "0.0%"
+        pipeline_table.add_row(label, str(cnt), pct)
+
+    console.print(pipeline_table)
+
     if breakdown:
         table = Table(
             title="[bold cyan]Historical Openings by Company[/bold cyan]",
@@ -206,3 +230,73 @@ def render_stats(stats: dict[str, Any]) -> None:
         console.print(table)
     else:
         console.print("[dim]No historical postings recorded yet. Run a scan to populate the database.[/dim]\n")
+
+
+def render_stale_applications(stale_jobs: list[dict[str, Any]], days: int = 7) -> None:
+    """Render stale applications awaiting follow-up."""
+    if not stale_jobs:
+        console.print(
+            Panel(
+                f"[bold green]No stale applications found![/bold green]\n\n"
+                f"[dim]All tracked applications have been submitted less than {days} day(s) ago or updated.[/dim]",
+                title="[bold cyan]Application Follow-up Tracker[/bold cyan]",
+                border_style="green",
+                padding=(1, 2),
+            )
+        )
+        return
+
+    table = Table(
+        title=f"[bold yellow]Applications Pending Follow-up (>= {days} days) ({len(stale_jobs)})[/bold yellow]",
+        box=box.ROUNDED,
+        header_style="bold magenta",
+    )
+    table.add_column("ID", style="bold green", justify="right", no_wrap=True)
+    table.add_column("Score", justify="right", no_wrap=True)
+    table.add_column("Company", style="bold white", no_wrap=True)
+    table.add_column("Position", style="cyan")
+    table.add_column("Applied Date", style="yellow")
+    table.add_column("Elapsed", justify="right")
+    table.add_column("Notes", style="dim")
+
+    for idx, j in enumerate(stale_jobs, start=1):
+        display_id = str(j.get("numeric_id") or idx)
+        score_val = j.get("relevance_score", 0) or 0
+        if score_val >= 70:
+            score_styled = f"[bold green]{score_val}[/bold green]"
+        elif score_val >= 40:
+            score_styled = f"[bold yellow]{score_val}[/bold yellow]"
+        elif score_val > 0:
+            score_styled = f"[cyan]{score_val}[/cyan]"
+        else:
+            score_styled = "[dim]0[/dim]"
+
+        elapsed = j.get("days_elapsed", 0)
+        elapsed_styled = f"[bold red]{elapsed}d ago[/bold red]" if elapsed >= 14 else f"[yellow]{elapsed}d ago[/yellow]"
+        applied_at = str(j.get("applied_at", ""))[:10]
+        notes = str(j.get("notes") or "-")
+
+        table.add_row(
+            display_id,
+            score_styled,
+            str(j.get("company", "")),
+            str(j.get("title", "")),
+            applied_at,
+            elapsed_styled,
+            notes,
+        )
+
+    console.print(table)
+    console.print("\n[bold cyan]Direct Outreach Links:[/bold cyan]")
+    for idx, j in enumerate(stale_jobs, start=1):
+        display_id = str(j.get("numeric_id") or idx)
+        eff_url, direct_search, label = resolve_effective_apply_url(j)
+        fallback_msg = (
+            f"\n     [dim]Direct search fallback:[/dim] [cyan]{direct_search}[/cyan]"
+            if direct_search and direct_search != eff_url
+            else ""
+        )
+        console.print(
+            f"  {display_id}. [bold white]{j.get('company')}[/bold white] - [cyan]{j.get('title')}[/cyan]\n"
+            f"     [bold underline blue]{eff_url}[/bold underline blue] [dim]({label})[/dim]{fallback_msg}"
+        )

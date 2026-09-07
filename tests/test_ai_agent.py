@@ -663,3 +663,95 @@ async def test_ask_ai_agent_primary_groq_preference(
 
     captured = capsys.readouterr()
     assert "Attempting primary provider: Groq" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_query_jobs_hard_cap_and_compact_schema(tmp_path: Path) -> None:
+    """Verify execute_tool('query_jobs') caps results at 15 and strips verbose DB fields."""
+    db_file = tmp_path / "test_cap.db"
+    init_db(db_file)
+    postings = [
+        JobPosting(
+            id=f"cap-job-{i}",
+            company=f"Company {i}",
+            title=f"Software Engineer {i}",
+            location="Bengaluru, India",
+            apply_url=f"https://jobs.example.com/{i}",
+            provider=ATSProvider.GREENHOUSE,
+            published_date="2026-09-01",
+        )
+        for i in range(25)
+    ]
+    record_jobs(postings, db_file)
+
+    res = await execute_tool("query_jobs", {"limit": 100}, db_path=db_file)
+    assert res["status"] == "success"
+    # Hard capped at 15
+    assert res["count"] == 15
+    assert len(res["jobs"]) == 15
+
+    # Check compact schema: only essential keys
+    allowed_keys = {"id", "company", "title", "location", "apply_url", "published_date"}
+    for j in res["jobs"]:
+        assert set(j.keys()) == allowed_keys
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_fallback_general_openings(tmp_path: Path, sample_jobs: list[JobPosting], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify natural query 'all openings' returns active roles with clear summary."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    db_file = tmp_path / "general_openings.db"
+    init_db(db_file)
+    record_jobs(sample_jobs, db_file)
+
+    reply = await ask_ai_agent("not lastest i want all the openings", chat_id="chat-all-jobs", db_path=db_file)
+    assert "Active Verified GCC Openings" in reply
+    assert "Celonis" in reply
+
+
+@pytest.mark.asyncio
+async def test_groq_413_payload_too_large_smart_shift(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify that when Groq returns HTTP 413 (TPM limit exceeded), it smart shifts to Gemini."""
+    monkeypatch.setenv("PRIMARY_LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "fake_groq_key")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake_gemini_key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def mock_router(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "api.groq.com" in url_str:
+            # Simulate Groq 413 TPM limit error
+            return httpx.Response(
+                413,
+                json={
+                    "error": {
+                        "message": "Request too large for model `openai/gpt-oss-120b` on TPM: Limit 8000, Requested 11365",
+                        "type": "tokens",
+                        "code": "rate_limit_exceeded",
+                    }
+                },
+            )
+        elif "generativelanguage.googleapis.com" in url_str:
+            return httpx.Response(
+                200,
+                json={
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {"text": "Successfully shifted to Gemini after Groq 413!"}
+                                ]
+                            }
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock_router)) as client:
+        reply = await ask_ai_agent("all openings", chat_id="chat-413-shift", client=client)
+        assert "Successfully shifted to Gemini after Groq 413!" in reply
+

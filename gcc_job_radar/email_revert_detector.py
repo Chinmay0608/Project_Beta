@@ -1,4 +1,4 @@
-﻿import re
+import re
 import difflib
 import sqlite3
 from enum import Enum
@@ -61,7 +61,7 @@ _NOISE_SUBJECTS = [
 ]
 
 def _match_patterns(text: str, patterns: List[str]) -> Optional[str]:
-    " Return first matching snippet.
+    """Return first matching snippet."""
     for pat in patterns:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
@@ -70,7 +70,7 @@ def _match_patterns(text: str, patterns: List[str]) -> Optional[str]:
     return None
 
 def classify_email_content(subject: str, sender: str, body: str) -> Tuple[RevertType, str]:
-    Classify email and return snippet.
+    """Classify email and return snippet."""
     sub = subject.lower()
     if any(noise in sub for noise in _NOISE_SUBJECTS):
         return RevertType.UNKNOWN, ''

@@ -234,7 +234,11 @@ class ChatHistoryManager:
         cid = str(chat_id)
         if cid not in self._histories:
             self._histories[cid] = []
-        self._histories[cid].append({"role": role, "content": content})
+        # Protect memory footprint: truncate very long assistant responses in memory
+        saved_content = content
+        if role == "assistant" and len(content) > 1500:
+            saved_content = content[:1500] + "\n[...truncated in memory...]"
+        self._histories[cid].append({"role": role, "content": saved_content})
         if len(self._histories[cid]) > self.max_turns * 2:
             self._histories[cid] = self._histories[cid][-self.max_turns * 2 :]
 
@@ -276,7 +280,8 @@ async def execute_tool(
         location = args.get("location")
         company = args.get("company")
         status = args.get("status", "NEW")
-        limit = int(args.get("limit", 5))
+        # Hard cap limit to max 15 to stay strictly within LLM context & TPM budgets
+        limit = min(max(1, int(args.get("limit", 5))), 15)
         jobs = query_jobs(
             title_keyword=title_keyword,
             location=location,
@@ -285,10 +290,26 @@ async def execute_tool(
             limit=limit,
             db_path=db_path,
         )
-        return {"status": "success", "count": len(jobs), "jobs": jobs}
+        compact_jobs = [
+            {
+                "id": j.get("numeric_id") or j.get("id"),
+                "company": j.get("company", "Unknown"),
+                "title": j.get("title", "Role"),
+                "location": j.get("location", ""),
+                "apply_url": j.get("direct_search_url") or j.get("apply_url") or "",
+                "published_date": str(j.get("published_date") or "Active")[:10],
+            }
+            for j in jobs
+        ]
+        return {
+            "status": "success",
+            "count": len(compact_jobs),
+            "jobs": compact_jobs,
+            "note": "Returned up to 15 matching roles. Prompt the user to filter if they need more specific roles."
+        }
 
     elif name == "get_applied_jobs":
-        limit = int(args.get("limit", 50))
+        limit = min(max(1, int(args.get("limit", 20))), 20)
         from gcc_job_radar.db import get_jobs_by_status
         from gcc_job_radar.link_resolver import resolve_effective_apply_url
 
@@ -302,10 +323,10 @@ async def execute_tool(
                 "title": j.get("title", "Role"),
                 "location": j.get("location", ""),
                 "status": "APPLIED",
-                "applied_at": j.get("applied_at"),
+                "applied_at": str(j.get("applied_at") or "")[:10],
                 "notes": j.get("notes"),
                 "apply_url": eff_url,
-                "published_date": j.get("published_date") or "Active",
+                "published_date": str(j.get("published_date") or "Active")[:10],
             })
         return {"status": "success", "count": len(formatted_jobs), "jobs": formatted_jobs}
 
@@ -587,10 +608,14 @@ def format_tool_result_summary(name: str, result: dict[str, Any]) -> str:
         for c in result["companies"]:
             p = c.get("provider", "OTHER").upper()
             by_provider.setdefault(p, []).append(c.get("name", ""))
-        text = f"🏢 <b>Configured GCC Companies ({len(result['companies'])}):</b>\n\n"
+        text = f"🏢 <b>Configured GCC Companies ({len(result['companies'])} total):</b>\n\n"
         for provider, names in sorted(by_provider.items()):
-            text += f"<b>{provider} ({len(names)}):</b>\n"
-            text += f"{', '.join(sorted(names))}\n\n"
+            prominent = [n for n in ["Celonis", "Databricks", "Snowflake", "BT Group", "Google", "Microsoft"] if n in names]
+            other = [n for n in sorted(names) if n not in prominent]
+            sample_list = prominent + other[: max(1, 8 - len(prominent))]
+            sample = ", ".join(sample_list)
+            text += f"• <b>{provider}</b> ({len(names)} boards): e.g. <i>{sample}...</i>\n"
+        text += "\n💡 <i>Use <code>/check &lt;name&gt;</code> to scan any company live!</i>"
         return text.strip()
     if "stats" in result:
         stats = result["stats"]
@@ -674,6 +699,30 @@ async def _fallback_response(
         )
         return format_tool_result_summary("manage_job_status", res)
 
+    # 0c. General open jobs query (e.g. "all openings", "all jobs", "show all openings", "open positions")
+    is_general_jobs_query = (
+        q in ("all openings", "all jobs", "openings", "jobs", "all roles", "open roles")
+        or any(phrase in q for phrase in [
+            "all openings", "all the openings", "all jobs", "show all jobs", "list all jobs",
+            "available jobs", "current openings", "every opening", "every job", "what openings",
+            "what jobs", "show openings", "open positions"
+        ])
+    )
+    if is_general_jobs_query:
+        res = await execute_tool("query_jobs", {"status": "NEW", "limit": 10}, db_path=db_path)
+        jobs = res.get("jobs", [])
+        if jobs:
+            header = "Active Verified GCC Openings"
+            msg = format_jobs_html(jobs, header)
+            msg += "\n\n💡 <i>Showing 10 recent active roles across 4,800+ GCCs. Filter by role or city (e.g. 'backend in Pune' or 'Python in Bangalore') or use <code>/latest</code>.</i>"
+            return msg
+        else:
+            return (
+                "ℹ️ <b>No Active Openings Found</b>\n\n"
+                "There are currently no active roles marked as NEW in the local database.\n"
+                "Run <code>/scan</code> to initiate a fresh scan across 4,800+ GCC career portals!"
+            )
+
     # 1. Greetings & capabilities
     if any(q.startswith(g) or q == g for g in ["hi", "hello", "hey", "who are you", "what can you do", "help"]):
         return (
@@ -704,16 +753,21 @@ async def _fallback_response(
         by_provider: dict[str, list[str]] = {}
         for c in COMPANIES:
             p_name = c.provider.value.upper()
-
             if p_name not in by_provider:
                 by_provider[p_name] = []
             by_provider[p_name].append(c.name)
 
-        text = f"🏢 <b>Tracked GCCs & Enterprise Tech Hubs ({len(COMPANIES)}):</b>\n\n"
+        text = f"🏢 <b>Tracked GCCs & Enterprise Tech Hubs ({len(COMPANIES)} total):</b>\n\n"
         for provider, names in sorted(by_provider.items()):
-            text += f"<b>{provider} ({len(names)}):</b>\n"
-            text += f"{', '.join(sorted(names))}\n\n"
-        text += "💡 <i>Use <code>/check &lt;name&gt;</code> to scan any company live!</i>"
+            prominent = [n for n in ["Celonis", "Databricks", "Snowflake", "BT Group", "Google", "Microsoft"] if n in names]
+            other = [n for n in sorted(names) if n not in prominent]
+            sample_list = prominent + other[: max(1, 8 - len(prominent))]
+            sample = ", ".join(sample_list)
+            text += f"• <b>{provider}</b> ({len(names)} boards): e.g. <i>{sample}...</i>\n"
+        text += (
+            "\n💡 <i>All 4,800+ boards are monitored automatically. "
+            "Use <code>/check &lt;name&gt;</code> (e.g. <code>/check celonis</code>) to scan any company live!</i>"
+        )
         return text.strip()
 
     # 3. Database Stats intent
@@ -812,16 +866,20 @@ async def _call_gemini(
     api_key: str,
     client: httpx.AsyncClient,
     db_path: Optional[Path] = None,
-) -> str:
+) -> Optional[str]:
     """Call Google Gemini REST API with multi-turn tool calling and conversational synthesis."""
     model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
-    # Build multi-turn contents
+    # Build multi-turn contents (keep recent turns to protect token budget)
+    recent_history = history[-4:] if len(history) > 4 else history
     contents: list[dict[str, Any]] = []
-    for turn in history:
+    for turn in recent_history:
         role = "user" if turn["role"] == "user" else "model"
-        contents.append({"role": role, "parts": [{"text": turn["content"]}]})
+        turn_text = turn["content"]
+        if len(turn_text) > 1500:
+            turn_text = turn_text[:1500] + "..."
+        contents.append({"role": role, "parts": [{"text": turn_text}]})
     contents.append({"role": "user", "parts": [{"text": prompt}]})
 
     payload: dict[str, Any] = {
@@ -835,12 +893,23 @@ async def _call_gemini(
 
     for _ in range(3):
         try:
-            resp = await client.post(url, json=payload, timeout=12.0)
+            resp = await client.post(url, json=payload, timeout=20.0)
         except Exception as exc:
             err_msg = f"[AI Agent Error] Gemini request failed (connection/timeout): {exc}"
             _safe_print(err_msg, file=sys.stderr)
             logger.error(err_msg)
             break
+
+        # If model is unavailable, rate-limited, or overloaded (503/429/404), attempt quick fallback
+        if resp.status_code in (503, 429, 404):
+            logger.warning("Gemini model %s returned HTTP %s. Retrying with fallback model...", model, resp.status_code)
+            fallback_model = "gemini-flash-latest" if model != "gemini-flash-latest" else "gemini-3.1-flash-lite"
+            url_fb = f"https://generativelanguage.googleapis.com/v1beta/models/{fallback_model}:generateContent?key={api_key}"
+            try:
+                await asyncio.sleep(1.0)
+                resp = await client.post(url_fb, json=payload, timeout=20.0)
+            except Exception as fb_exc:
+                logger.error("Fallback Gemini request failed: %s", fb_exc)
 
         if resp.status_code != 200:
             err_msg = f"[AI Agent Error] Gemini API error (HTTP {resp.status_code}): {resp.text}"
@@ -914,8 +983,13 @@ async def _call_openai_compatible(
     }
 
     messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for turn in history:
-        messages.append({"role": turn["role"], "content": turn["content"]})
+    # Prune history to last 4 turns (2 conversational turns) and cap length to preserve token budget
+    recent_history = history[-4:] if len(history) > 4 else history
+    for turn in recent_history:
+        turn_content = turn["content"]
+        if len(turn_content) > 1500:
+            turn_content = turn_content[:1500] + "..."
+        messages.append({"role": turn["role"], "content": turn_content})
     messages.append({"role": "user", "content": prompt})
 
     payload = {
@@ -930,11 +1004,18 @@ async def _call_openai_compatible(
 
     for _ in range(3):
         try:
-            resp = await client.post(url, json=payload, headers=headers, timeout=15.0)
+            resp = await client.post(url, json=payload, headers=headers, timeout=20.0)
         except Exception as exc:
             err_msg = f"[AI Agent Error] {provider_name} request failed (connection/timeout): {exc}"
             _safe_print(err_msg, file=sys.stderr)
             logger.error(err_msg)
+            return None
+
+        # Handle rate limits or payload too large (e.g. Groq 413 / 429 TPM exhaustion)
+        if resp.status_code in (413, 429):
+            err_msg = f"[AI Agent Error] {provider_name} rate/size limit reached (HTTP {resp.status_code}): {resp.text}"
+            _safe_print(err_msg, file=sys.stderr)
+            logger.warning(err_msg)
             return None
 
         if resp.status_code != 200:
@@ -970,10 +1051,20 @@ async def _call_openai_compatible(
             res = await execute_tool(fn_name, fn_args, db_path=db_path)
             last_tool_name = fn_name
             last_tool_result = res
+            res_str = json.dumps(res)
+            # Ensure tool result does not blow TPM budget (cap at 3500 chars)
+            if len(res_str) > 3500:
+                if isinstance(res, dict) and "jobs" in res and len(res["jobs"]) > 8:
+                    res["jobs"] = res["jobs"][:8]
+                    res["note"] = "Results capped to 8 for token budget."
+                    res_str = json.dumps(res)
+                if len(res_str) > 3500:
+                    res_str = res_str[:3450] + '..."}'
+
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.get("id"),
-                "content": json.dumps(res),
+                "content": res_str,
             })
 
         payload["messages"] = messages

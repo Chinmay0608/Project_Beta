@@ -3,12 +3,26 @@
 import asyncio
 import html
 import logging
+import os
 from pathlib import Path
 import re
+import sys
 from typing import Any, Optional
 from dotenv import load_dotenv
 import httpx
 from rich.console import Console
+
+# Ensure standard streams use utf-8 on Windows consoles to prevent charmap encoding crashes
+if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr is not None and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # Automatically load environment variables from .env if present
 load_dotenv()
@@ -40,6 +54,53 @@ _is_scanning: bool = False
 _last_scan_timestamp: float = 0.0
 
 
+def split_telegram_message(text: str, max_length: int = 3950) -> list[str]:
+    """Split a long message into safe chunks <= max_length (Telegram's hard limit is 4096).
+
+    Prefers splitting on paragraph breaks (\n\n), then line breaks (\n), then hard slices.
+    """
+    if not text:
+        return [""]
+    if len(text) <= max_length:
+        return [text]
+
+    chunks: list[str] = []
+    paragraphs = text.split("\n\n")
+    current_chunk = ""
+
+    for para in paragraphs:
+        if len(current_chunk) + (2 if current_chunk else 0) + len(para) <= max_length:
+            current_chunk = f"{current_chunk}\n\n{para}" if current_chunk else para
+        else:
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+
+            if len(para) > max_length:
+                lines = para.split("\n")
+                line_chunk = ""
+                for line in lines:
+                    if len(line_chunk) + (1 if line_chunk else 0) + len(line) <= max_length:
+                        line_chunk = f"{line_chunk}\n{line}" if line_chunk else line
+                    else:
+                        if line_chunk:
+                            chunks.append(line_chunk)
+                            line_chunk = ""
+                        while len(line) > max_length:
+                            chunks.append(line[:max_length])
+                            line = line[max_length:]
+                        line_chunk = line
+                if line_chunk:
+                    current_chunk = line_chunk
+            else:
+                current_chunk = para
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
+
+
 async def send_telegram_chat_action(
     bot_token: str, chat_id: str | int, client: httpx.AsyncClient, action: str = "typing"
 ) -> bool:
@@ -60,25 +121,48 @@ async def send_telegram_reply(
     client: httpx.AsyncClient,
     reply_markup: Optional[dict[str, Any]] = None,
 ) -> bool:
-    """Send an HTML-formatted reply to a Telegram chat with optional InlineKeyboardMarkup."""
+    """Send an HTML-formatted reply to a Telegram chat, auto-splitting messages > 3950 characters."""
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload: dict[str, Any] = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
-    try:
-        resp = await client.post(url, json=payload, timeout=10.0)
-        if resp.status_code != 200:
-            logger.warning("Failed to send Telegram reply: %s (status %s)", resp.text, resp.status_code)
-            return False
-        return True
-    except Exception as exc:
-        logger.warning("Error sending Telegram reply: %s", exc)
-        return False
+    chunks = split_telegram_message(text, max_length=3950)
+    all_ok = True
+
+    for idx, chunk in enumerate(chunks):
+        is_last = (idx == len(chunks) - 1)
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": chunk,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        if is_last and reply_markup:
+            payload["reply_markup"] = reply_markup
+
+        try:
+            resp = await client.post(url, json=payload, timeout=12.0)
+            if resp.status_code != 200:
+                # If Telegram rejects entity parsing (HTML error), retry chunk as plain text
+                logger.warning(
+                    "Telegram reply chunk failed (status %s): %s. Retrying without HTML parse_mode...",
+                    resp.status_code,
+                    resp.text,
+                )
+                payload.pop("parse_mode", None)
+                payload["text"] = re.sub(r"<[^>]+>", "", chunk)
+                resp_plain = await client.post(url, json=payload, timeout=12.0)
+                if resp_plain.status_code != 200:
+                    logger.warning(
+                        "Failed to send Telegram reply chunk even without HTML: %s (status %s)",
+                        resp_plain.text,
+                        resp_plain.status_code,
+                    )
+                    all_ok = False
+            if not is_last:
+                await asyncio.sleep(0.15)
+        except Exception as exc:
+            logger.warning("Error sending Telegram reply chunk: %s", exc)
+            all_ok = False
+
+    return all_ok
 
 
 def format_jobs_html(jobs: list[JobPosting | dict[str, Any]], title: str) -> str:

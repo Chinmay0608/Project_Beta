@@ -44,7 +44,6 @@ COMPANIES: list[CompanyConfig] = [
     CompanyConfig(name="Axel", provider="ashby", board_token="axel"),
     CompanyConfig(name="BUILD", provider="ashby", board_token="build"),
     CompanyConfig(name="Babbel", provider="ashby", board_token="babbel"),
-    CompanyConfig(name="Backblaze", provider="greenhouse", board_token="backblaze"),
     CompanyConfig(name="Band Industries", provider="smartrecruiters", board_token="bandindustries"),
     CompanyConfig(name="Behavox", provider="greenhouse", board_token="behavox"),
     CompanyConfig(name="Benevity", provider="ashby", board_token="benevity"),

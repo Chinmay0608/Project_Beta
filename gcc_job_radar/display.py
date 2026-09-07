@@ -1,6 +1,8 @@
 """Rich terminal output rendering and tables for GCC Job Radar."""
 
-from typing import Any
+from __future__ import annotations
+
+from typing import Any, Optional
 from rich import box
 from rich.console import Console
 from rich.panel import Panel

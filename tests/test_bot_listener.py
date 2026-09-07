@@ -544,4 +544,114 @@ async def test_latest_command_with_inline_keyboard(tmp_path: Path, sample_jobs: 
         assert kb[1][1]["text"] == "Applied"
 
 
+def test_split_telegram_message() -> None:
+    """Verify split_telegram_message splits long texts cleanly without exceeding limits."""
+    from gcc_job_radar.bot_listener import split_telegram_message
+
+    # 1. Empty & short text
+    assert split_telegram_message("") == [""]
+    short_text = "Hello world! Short message."
+    assert split_telegram_message(short_text, max_length=100) == [short_text]
+
+    # 2. Paragraph splitting (\n\n)
+    para1 = "A" * 60
+    para2 = "B" * 60
+    combined = f"{para1}\n\n{para2}"
+    chunks = split_telegram_message(combined, max_length=70)
+    assert len(chunks) == 2
+    assert chunks[0] == para1
+    assert chunks[1] == para2
+
+    # 3. Line splitting (\n) when paragraph is larger than max_length
+    line1 = "C" * 40
+    line2 = "D" * 40
+    long_para = f"{line1}\n{line2}"
+    chunks2 = split_telegram_message(long_para, max_length=50)
+    assert len(chunks2) == 2
+    assert chunks2[0] == line1
+    assert chunks2[1] == line2
+
+    # 4. Hard slicing when single line has no newlines
+    giant_line = "E" * 120
+    chunks3 = split_telegram_message(giant_line, max_length=50)
+    assert len(chunks3) == 3
+    assert len(chunks3[0]) == 50
+    assert len(chunks3[1]) == 50
+    assert len(chunks3[2]) == 20
+    assert "".join(chunks3) == giant_line
+
+
+@pytest.mark.asyncio
+async def test_send_telegram_reply_chunking_and_markup() -> None:
+    """Verify send_telegram_reply sends multi-chunk messages and attaches reply_markup only to the last chunk."""
+    from gcc_job_radar.bot_listener import send_telegram_reply
+
+    sent_payloads = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        data = json.loads(request.content.decode("utf-8"))
+        sent_payloads.append(data)
+        return httpx.Response(200, json={"ok": True})
+
+    card1 = "🏢 <b>Company 1</b>\n💼 Role 1\n📍 City 1\n" + ("X" * 2500)
+    card2 = "🏢 <b>Company 2</b>\n💼 Role 2\n📍 City 2\n" + ("Y" * 2500)
+    long_text = f"{card1}\n\n{card2}"
+
+    fake_markup = {"inline_keyboard": [[{"text": "Button", "url": "https://example.com"}]]}
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        ok = await send_telegram_reply(
+            bot_token="test_token",
+            chat_id=12345,
+            text=long_text,
+            client=client,
+            reply_markup=fake_markup,
+        )
+
+        assert ok is True
+        assert len(sent_payloads) == 2
+        # First chunk has no reply_markup
+        assert "reply_markup" not in sent_payloads[0]
+        # Final chunk has the reply_markup
+        assert sent_payloads[1].get("reply_markup") == fake_markup
+        # Both chunks under 3950 chars
+        assert len(sent_payloads[0]["text"]) <= 3950
+        assert len(sent_payloads[1]["text"]) <= 3950
+
+
+@pytest.mark.asyncio
+async def test_send_telegram_reply_html_fallback() -> None:
+    """Verify send_telegram_reply retries without HTML formatting if Telegram returns 400 Bad Request."""
+    from gcc_job_radar.bot_listener import send_telegram_reply
+
+    call_count = 0
+    sent_payloads = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        data = json.loads(request.content.decode("utf-8"))
+        sent_payloads.append(data)
+        # Fail first attempt (HTML parsing error)
+        if data.get("parse_mode") == "HTML":
+            return httpx.Response(400, json={"ok": False, "description": "Bad Request: can't parse entities"})
+        # Succeed on retry without parse_mode
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        ok = await send_telegram_reply(
+            bot_token="test_token",
+            chat_id=12345,
+            text="<b>Malformed <i>HTML</b>",
+            client=client,
+        )
+
+        assert ok is True
+        assert call_count == 2
+        assert sent_payloads[0].get("parse_mode") == "HTML"
+        assert "parse_mode" not in sent_payloads[1]
+        assert "<b>" not in sent_payloads[1]["text"]
+
+
+
 

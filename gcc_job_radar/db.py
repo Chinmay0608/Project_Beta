@@ -398,12 +398,16 @@ def filter_new_jobs(
     with sqlite3.connect(target_path) as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT id, lower(apply_url), lower(company), lower(title), lower(location) FROM seen_jobs"
+            "SELECT id, lower(apply_url), lower(company), lower(title), lower(location), status FROM seen_jobs"
         )
         records = cursor.fetchall()
         seen_ids = {r[0] for r in records}
         seen_urls = {r[1] for r in records if r[1]}
         seen_semantic = {(r[2], r[3], r[4]) for r in records}
+        # Dismissed jobs must never re-surface as new — treat them as permanently seen
+        dismissed_ids = {r[0] for r in records if r[5] and r[5].upper() == "DISMISSED"}
+        dismissed_urls = {r[1] for r in records if r[1] and r[5] and r[5].upper() == "DISMISSED"}
+        dismissed_semantic = {(r[2], r[3], r[4]) for r in records if r[5] and r[5].upper() == "DISMISSED"}
 
     new_jobs: list[JobPosting] = []
     existing_jobs: list[JobPosting] = []
@@ -419,6 +423,11 @@ def filter_new_jobs(
         comp_lower = job.company.lower().strip()
         title_lower = job.title.lower().strip()
         loc_lower = job.location.lower().strip()
+
+        # Fast-path: if this posting matches any dismissed record, treat as existing (never resurface)
+        if key in dismissed_ids or clean_url in dismissed_urls or sem_key in dismissed_semantic:
+            existing_jobs.append(job)
+            continue
 
         cursor.execute(
             """
@@ -524,6 +533,10 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
 
             if matched:
                 matched_id, existing_status, existing_provider, existing_url, existing_loc = matched
+                # DISMISSED is a permanent tombstone — never re-open it to NEW.
+                # Any other non-NEW status (APPLIED, INTERVIEWING, REJECTED) is also preserved.
+                if existing_status == "DISMISSED":
+                    continue  # Skip entirely — do not touch this record again
                 target_status = existing_status if existing_status != "NEW" else job.status
                 target_url = (
                     existing_url
@@ -634,6 +647,11 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                 setattr(j, "notes", meta[3])
                 setattr(j, "direct_search_url", meta[4])
                 setattr(j, "relevance_score", meta[5] if meta[5] is not None else 0)
+
+
+def save_job(job: JobPosting, db_path: Optional[Path] = None) -> None:
+    """Save a single job posting to the database, delegating to record_jobs."""
+    record_jobs([job], db_path=db_path)
 
 
 def get_stats(db_path: Optional[Path] = None) -> dict[str, Any]:
@@ -1454,4 +1472,24 @@ def reactivate_company(company_name: str, db_path: Optional[Path] = None) -> boo
         )
         conn.commit()
         return True
+
+
+def get_applied_jobs(db_path: Optional[Path] = None) -> list[dict[str, Any]]:
+    """Retrieve jobs with status 'APPLIED' for email revert correlation.
+    Returns a list of dicts containing numeric_id, id, company, apply_url, status, notes, direct_search_url.
+    """
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+    with sqlite3.connect(target_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT rowid AS numeric_id, id, company, apply_url, status, notes, direct_search_url
+            FROM seen_jobs
+            WHERE UPPER(status) = 'APPLIED'
+            """
+        )
+        rows = cursor.fetchall()
+    return [dict(row) for row in rows]
 

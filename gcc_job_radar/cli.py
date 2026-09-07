@@ -266,7 +266,7 @@ def scan(
             )
             raise typer.Exit(code=1)
 
-    render_banner(len(target_companies))
+    render_banner(len(target_companies), provider=provider)
 
     with Progress(
         SpinnerColumn(),

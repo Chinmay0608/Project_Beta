@@ -5,6 +5,8 @@ from typing import Optional
 import pytest
 from gcc_job_radar.filters import (
     is_potential_india_location,
+    is_tech_role,
+    is_valid_get_role,
     matches_india_location,
     matches_target_title,
 )
@@ -307,3 +309,113 @@ def test_is_entry_level_with_snippet(title: str, snippet: Optional[str], expecte
     """Verify is_entry_level correctly uses the snippet content fallback for generic titles."""
     from gcc_job_radar.filters import is_entry_level
     assert is_entry_level(title, content=snippet) is expected
+
+
+# ==============================================================================
+# is_tech_role – board-level gate for "Real Roles Only"
+# ==============================================================================
+
+
+@pytest.mark.parametrize(
+    "title,department",
+    [
+        ("Associate Software Engineer", ""),
+        ("Software Engineer Trainee", ""),
+        ("SDE 1", "Engineering"),
+        ("SWE Intern", ""),
+        ("Backend Developer", ""),
+        ("Frontend Engineer", ""),
+        ("Full Stack Developer", ""),
+        ("Data Engineer", ""),
+        ("Data Scientist", ""),
+        ("Data Analyst", "Data Science"),
+        ("ML Engineer", ""),
+        ("Machine Learning Engineer", ""),
+        ("AI Engineer", ""),
+        ("Cloud Engineer", ""),
+        ("DevOps Engineer", ""),
+        ("Site Reliability Engineer", ""),
+        ("Platform Engineer", ""),
+        ("SRE Intern", ""),
+        ("SDET", "Quality Engineering"),
+        ("Test Automation Engineer", ""),
+        ("QA Engineer", ""),
+        ("Cybersecurity Analyst", "Security Engineering"),
+        ("Security Engineer", ""),
+        ("Firmware Engineer", ""),
+        ("Embedded Software Engineer", ""),
+        ("Infrastructure Engineer", ""),
+    ],
+)
+def test_is_tech_role_positive(title: str, department: str) -> None:
+    """Verify that software/data/AI/ML/cloud/DevOps roles are accepted."""
+    assert is_tech_role(title, department) is True
+
+
+@pytest.mark.parametrize(
+    "title,department",
+    [
+        ("Mechanical Engineer Trainee", ""),
+        ("Graduate Engineer Trainee – BU Quay and Horizontal", "Mechanical Engineering"),
+        ("Civil Engineer", ""),
+        ("Structural Engineer", ""),
+        ("Electrical Engineer", ""),
+        ("HVAC Engineer", ""),
+        ("AutoCAD Designer", ""),
+        ("Piping Designer", ""),
+        ("Instrumentation Engineer", ""),
+        ("Teamcenter Admin", ""),
+        ("Telecaller", ""),
+        ("Nursing Assistant", ""),
+        ("BDR Representative", ""),
+        ("SDR Associate", ""),
+        ("Field Engineer", ""),
+        ("Sales Engineer", ""),
+        ("", ""),
+        ("   ", ""),
+    ],
+)
+def test_is_tech_role_negative(title: str, department: str) -> None:
+    """Verify that non-software engineering disciplines are rejected."""
+    assert is_tech_role(title, department) is False
+
+
+def test_is_tech_role_with_department_override() -> None:
+    """Department context can tip ambiguous titles toward or away from tech."""
+    # Generic 'Engineer' title passes if department is clearly IT
+    assert is_tech_role("Engineer", "Software Engineering") is True
+    # Mechanical dept must be rejected even if 'engineer' word present
+    assert is_tech_role("Engineer", "Mechanical Engineering") is False
+
+
+# ==============================================================================
+# Indian Tech Trainee / GET Filter Hardening Tests
+# ==============================================================================
+
+
+@pytest.mark.parametrize(
+    "title,description,expected",
+    [
+        # Tech GET roles accepted
+        ("GET - Software", "", True),
+        ("Graduate Engineer Trainee (IT)", "", True),
+        ("Graduate Engineer Trainee - Cloud & DevOps", "", True),
+        ("GET - Data Engineering", "", True),
+        ("Software Engineer Trainee", "", True),
+        ("Engineering Trainee", "Python, React, and SQL development", True),
+        ("Graduate Engineer Trainee", "Java backend development and microservices", True),
+        # Non-tech GET roles rejected
+        ("Graduate Engineer Trainee - Mechanical", "", False),
+        ("GET - Civil Engineering", "", False),
+        ("Graduate Engineer Trainee – BU Quay and Horizontal & Yard", "", False),
+        ("Graduate Engineer Trainee (Electrical)", "", False),
+        ("GET - Piping & Instrumentation", "", False),
+        ("Engineering Trainee - AutoCAD", "", False),
+        ("Graduate Engineer Trainee", "HVAC maintenance and plant operations", False),
+        ("GET", "Mechanical workshop and machinery maintenance", False),
+    ],
+)
+def test_is_valid_get_role(title: str, description: str, expected: bool) -> None:
+    """Verify GET roles are strictly accepted for tech and rejected for non-software disciplines."""
+    assert is_valid_get_role(title, description) is expected
+

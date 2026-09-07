@@ -10,6 +10,103 @@ from gcc_job_radar.config import (
 # Pattern to mask 'member of technical staff' before checking exclusions so 'staff' is not falsely triggered
 _MTS_MASK_PATTERN = re.compile(r"(?i)\bmember\s+of\s+technical\s+staff\b")
 
+# ---------------------------------------------------------------------------
+# Tech-role gate: used by the harvester to reject non-software ATS boards
+# ---------------------------------------------------------------------------
+
+_TECH_ROLE_PATTERN = re.compile(
+    r"""(?ix)
+    \b(
+        software | sde | swe | developer | coder |
+        full[\s\-]?stack | backend | back[\s\-]?end |
+        front[\s\-]?end | frontend |
+        data\s+(?:engineer|scientist|analyst|science) |
+        machine\s+learning | ml\s+engineer | ai\s+engineer |
+        deep\s+learning | nlp\s+engineer | computer\s+vision |
+        cloud\s+(?:engineer|architect|developer) |
+        devops | devsecops | mlops |
+        site\s+reliability | sre |
+        platform\s+engineer(?:ing)? |
+        infrastructure\s+engineer(?:ing)? |
+        it\s+engineer(?:ing)? |
+        systems?\s+engineer(?!\s+(?:mech|civil|struct|elec)) |
+        engineer\s+(?:trainee|intern) |
+        qa\s+(?:engineer|automation) | sdet | test\s+automation |
+        security\s+engineer | cybersecurity |
+        firmware\s+engineer | embedded\s+software |
+        network\s+(?:software|automation)\s+engineer
+    )\b
+    """,
+)
+
+_NON_TECH_DISCIPLINE_PATTERN = re.compile(
+    r"""(?ix)
+    \b(
+        mechanical | civil | structural | electrical |
+        autocad | \bcad\b | \bnx\b | teamcenter |
+        piping | hvac | instrumentation |
+        recruiter | talent(?:\s+acquisition)? | back\s+office |
+        field\s+executive | customer\s+support | telecaller |
+        operations(?:\s+executive)? | sales | marketing | hr |
+        nursing | bdr | sdr |
+        (?:field|sales)\s+engineer(?:ing)?
+    )\b
+    """,
+)
+
+_GET_PATTERN = re.compile(
+    r"""(?ix)
+    \b(?:graduate\s+engineer\s+trainee|\bget\b|engineering\s+trainee)\b
+    """,
+)
+
+_TECH_DISCIPLINE_PATTERN = re.compile(
+    r"""(?ix)
+    \b(
+        software | sde | swe | develop(?:er|ment|ing)? | coding | programming |
+        it | information\s+technology | computer\s+science | cs |
+        data | cloud | ai | ml | machine\s+learning |
+        backend | frontend | full[\s\-]?stack | devops | sre |
+        qa | test | automation | systems? | network |
+        python | java | react | node | sql | web | app
+    )\b
+    """,
+)
+
+
+def is_valid_get_role(title: str, description: str = "") -> bool:
+    """Validate that a Graduate Engineer Trainee (GET) role is strictly for software/tech.
+
+    If title contains 'GET' or 'Graduate Engineer Trainee', it requires an explicit
+    tech discipline (Software, IT, Computer Science, Cloud, Data, etc.) in the title
+    or description, and strictly discards roles containing non-software disciplines
+    (mechanical, civil, structural, electrical, autocad, cad, nx, piping, hvac, instrumentation).
+    """
+    text = f"{title} {description}".strip()
+    if not text:
+        return False
+    if _NON_TECH_DISCIPLINE_PATTERN.search(text):
+        return False
+    if _GET_PATTERN.search(title):
+        return bool(_TECH_DISCIPLINE_PATTERN.search(text))
+    return True
+
+
+def is_tech_role(title: str, department: str = "") -> bool:
+    """Return True only if the title/department belongs to a software/data/AI/ML/cloud/DevOps discipline.
+
+    Explicitly rejects non-software engineering disciplines (mechanical, civil, HVAC, etc.)
+    regardless of whether the word 'engineer' appears in the title.
+    """
+    text = f"{title} {department}".strip()
+    if not text:
+        return False
+    if _NON_TECH_DISCIPLINE_PATTERN.search(text):
+        return False
+    if _GET_PATTERN.search(title):
+        return bool(_TECH_DISCIPLINE_PATTERN.search(text))
+    return bool(_TECH_ROLE_PATTERN.search(text))
+
 # Disqualify roles requiring 3+ or more years of experience or experienced mid-level ranges (e.g. 2-4+ yrs)
 EXPERIENCE_DISQUALIFY_PATTERN: re.Pattern[str] = re.compile(
     r"""
@@ -404,6 +501,14 @@ def is_entry_level(
         if content and FRESHER_EXPERIENCE_PATTERN.search(content) and not requires_experienced_candidate(content):
             title_matches = True
         else:
+            return False
+
+    # For GET / Trainee roles, discard if non-tech disciplines are mentioned in title or content
+    if _GET_PATTERN.search(clean_title):
+        full_text = f"{clean_title} {content}".strip()
+        if _NON_TECH_DISCIPLINE_PATTERN.search(full_text):
+            return False
+        if content and content.strip() and not _TECH_DISCIPLINE_PATTERN.search(full_text):
             return False
 
     # If title matches, verify content doesn't require experienced candidate (3+ years)

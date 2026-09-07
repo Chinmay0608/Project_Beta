@@ -48,13 +48,16 @@ class SmartRecruitersClient(BaseATSClient):
                 if not (matches_india_location(city) or matches_india_location(full_location)):
                     continue
 
-                apply_url = job.get("ref")
+                # Prefer the public candidate-facing URL; never expose api.smartrecruiters.com.
+                job_id = job.get("id")
+                apply_url = (
+                    job.get("applyUrl")
+                    or job.get("postingUrl")
+                    or (job.get("ref") if job.get("ref") and "api.smartrecruiters.com" not in job.get("ref", "") else None)
+                    or (f"https://jobs.smartrecruiters.com/{company.board_token}/{job_id}" if job_id else None)
+                )
                 if not apply_url:
-                    job_id = job.get("id")
-                    if job_id:
-                        apply_url = f"https://jobs.smartrecruiters.com/{company.board_token}/{job_id}"
-                    else:
-                        continue
+                    continue
 
                 released_date = job.get("releasedDate")
                 published_date = released_date[:10] if released_date else "Active"

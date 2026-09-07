@@ -28,6 +28,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.models import ATSProvider
+from gcc_job_radar.filters import is_tech_role
 
 try:
     from rich.console import Console
@@ -51,7 +52,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "gcc_job_radar" / "config.py"
-DEFAULT_CONCURRENCY = 60
+DEFAULT_CONCURRENCY = 50
 DEFAULT_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gcc-job-radar/mass-harvester/1.0",
@@ -658,7 +659,8 @@ async def verify_ats_board(
 ) -> Optional[int]:
     """Verify an ATS job board by issuing a direct REST API call.
 
-    Requires HTTP 200 response and valid non-empty active postings.
+    Requires HTTP 200 response, valid non-empty active postings, AND at least
+    one job title that passes is_tech_role() (guards against mechanical/civil boards).
     """
     if not slug or slug.lower() in RESERVED_SLUGS:
         return None
@@ -688,23 +690,49 @@ async def verify_ats_board(
 
         data = resp.json()
 
+        def _has_tech_title(titles: list[str]) -> bool:
+            """Return True if at least one of the sampled titles is a tech role."""
+            return any(is_tech_role(t) for t in titles if t)
+
         if provider in (ATSProvider.GREENHOUSE, ATSProvider.ASHBY):
             if isinstance(data, dict) and isinstance(data.get("jobs"), list):
-                count = len(data["jobs"])
-                return count if count > 0 else None
+                jobs_list = data["jobs"]
+                count = len(jobs_list)
+                if count == 0:
+                    return None
+                # Sample up to 5 titles
+                sample_titles = [j.get("title") or j.get("name") or "" for j in jobs_list[:5]]
+                if not _has_tech_title(sample_titles):
+                    logger.debug("Board %s/%s skipped: no tech titles in sample %s", provider, clean_slug, sample_titles)
+                    return None
+                return count
 
         elif provider == ATSProvider.LEVER:
             if isinstance(data, list):
                 count = len(data)
-                return count if count > 0 else None
+                if count == 0:
+                    return None
+                sample_titles = [j.get("text") or j.get("title") or "" for j in data[:5]]
+                if not _has_tech_title(sample_titles):
+                    logger.debug("Board %s/%s skipped: no tech titles in sample %s", provider, clean_slug, sample_titles)
+                    return None
+                return count
 
         elif provider == ATSProvider.SMARTRECRUITERS:
             if isinstance(data, dict):
                 total_found = data.get("totalFound", 0)
                 content = data.get("content", [])
                 if isinstance(total_found, int) and total_found > 0:
+                    sample_titles = [j.get("name") or j.get("title") or "" for j in (content or [])[:5]]
+                    if sample_titles and not _has_tech_title(sample_titles):
+                        logger.debug("Board %s/%s skipped: no tech titles in sample %s", provider, clean_slug, sample_titles)
+                        return None
                     return total_found
                 if isinstance(content, list) and len(content) > 0:
+                    sample_titles = [j.get("name") or j.get("title") or "" for j in content[:5]]
+                    if not _has_tech_title(sample_titles):
+                        logger.debug("Board %s/%s skipped: no tech titles in sample %s", provider, clean_slug, sample_titles)
+                        return None
                     return len(content)
 
     except Exception as exc:
@@ -877,6 +905,76 @@ def append_verified_boards_to_config(
     return len(new_entries)
 
 
+SIMPLIFYJOBS_FEEDS: list[str] = [
+    "https://raw.githubusercontent.com/SimplifyJobs/Summer2026-Internships/dev/.github/scripts/listings.json",
+    "https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/.github/scripts/listings.json",
+]
+
+
+async def fetch_simplifyjobs_candidates(
+    client: httpx.AsyncClient,
+) -> list[tuple[str, ATSProvider, str]]:
+    """Harvest ATS candidate slugs from SimplifyJobs GitHub JSON feeds.
+
+    Fetches Summer2026 Internships and New-Grad Positions feeds, extracts
+    direct ATS provider URLs (Greenhouse, Lever, Ashby, SmartRecruiters),
+    and returns deduplicated (name, provider, slug) tuples.
+    """
+    candidates: list[tuple[str, ATSProvider, str]] = []
+    seen_tokens: set[tuple[ATSProvider, str]] = set()
+
+    for feed_url in SIMPLIFYJOBS_FEEDS:
+        try:
+            resp = await client.get(feed_url, timeout=httpx.Timeout(15.0, connect=8.0))
+            if resp.status_code != 200:
+                logger.warning("SimplifyJobs feed returned HTTP %d: %s", resp.status_code, feed_url)
+                continue
+
+            listings = resp.json()
+            if not isinstance(listings, list):
+                logger.warning("Unexpected SimplifyJobs feed format (not a list): %s", feed_url)
+                continue
+
+            for item in listings:
+                if not isinstance(item, dict):
+                    continue
+
+                company_name: str = item.get("company_name") or item.get("company") or ""
+                # Collect all URL fields that might carry a direct ATS link
+                url_fields: list[str] = []
+                for field in ("url", "apply_url", "job_url", "link"):
+                    val = item.get(field)
+                    if isinstance(val, str) and val.startswith("http"):
+                        url_fields.append(val)
+                # Also check nested 'links' or 'urls' lists
+                for field in ("links", "urls"):
+                    raw = item.get(field)
+                    if isinstance(raw, list):
+                        url_fields.extend(u for u in raw if isinstance(u, str) and u.startswith("http"))
+
+                for raw_url in url_fields:
+                    extracted = extract_slug_from_url(raw_url)
+                    if not extracted:
+                        continue
+                    prov, slug = extracted
+                    token_key = (prov, slug.lower())
+                    if token_key in seen_tokens:
+                        continue
+                    seen_tokens.add(token_key)
+                    name = strip_legal_suffixes(company_name) if company_name else slug_to_company_name(slug)
+                    candidates.append((name or slug_to_company_name(slug), prov, slug))
+
+            console.print(
+                f"    [green]SimplifyJobs feed:[/green] extracted [bold]{len(candidates)}[/bold] "
+                f"unique ATS candidates so far from [cyan]{feed_url.split('/')[-4]}[/cyan]"
+            )
+
+        except Exception as exc:
+            logger.warning("Error fetching SimplifyJobs feed %s: %s", feed_url, exc)
+
+    return candidates
+
+
 async def run_harvest_mass_ats(
     source: str = "all",
     target_count: Optional[int] = None,
@@ -911,7 +1009,14 @@ async def run_harvest_mass_ats(
                 raw_candidates.append((c_name, prov, slug))
             console.print(f"    [green]Found {len(urlscan_hits)} candidates from URLScan.[/green]")
 
-        # 2. Harvest from Enterprise Cohorts if source is "all" or "cohorts"
+        # 2. Harvest from SimplifyJobs GitHub feeds if source is "all" or "simplifyjobs"
+        if source in ("all", "simplifyjobs"):
+            console.print("[bold cyan][*][/bold cyan] Harvesting ATS slugs from SimplifyJobs GitHub feeds...")
+            sj_candidates = await fetch_simplifyjobs_candidates(client=client)
+            raw_candidates.extend(sj_candidates)
+            console.print(f"    [green]Found {len(sj_candidates)} candidates from SimplifyJobs feeds.[/green]")
+
+        # 3. Harvest from Enterprise Cohorts if source is "all" or "cohorts"
         if source in ("all", "cohorts"):
             console.print("[bold cyan][*][/bold cyan] Generating candidate slug variants from Enterprise Tech cohorts...")
             cohort_count = 0
@@ -928,8 +1033,8 @@ async def run_harvest_mass_ats(
                         cohort_count += 1
             console.print(f"    [green]Generated {cohort_count} prober variations from {len(ENTERPRISE_TECH_COHORTS)} cohort firms.[/green]")
 
-        # 3. Harvest from custom file if source is a file path
-        if source not in ("all", "urlscan", "cohorts"):
+        # 4. Harvest from custom file if source is a file path
+        if source not in ("all", "urlscan", "simplifyjobs", "cohorts"):
             src_path = Path(source)
             if src_path.exists():
                 console.print(f"[bold cyan][*][/bold cyan] Reading candidates from custom source file: {src_path}...")
@@ -1064,7 +1169,7 @@ def main() -> None:
         "-s",
         type=str,
         default="all",
-        help="Source: 'all', 'urlscan', 'cohorts', or path to custom text/URL list (default: all).",
+        help="Source: 'all', 'urlscan', 'simplifyjobs', 'cohorts', or path to custom text/URL list (default: all).",
     )
     parser.add_argument(
         "--target-count",

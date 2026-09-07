@@ -192,6 +192,25 @@ def test_cli_provider_filter_success(tmp_path: Path) -> None:
         assert all(c.provider == ATSProvider.GREENHOUSE for c in captured_companies)
 
 
+def test_cli_provider_filter_workday(tmp_path: Path) -> None:
+    """Verify CLI --provider workday filters scan to Workday GCC boards and updates banner."""
+    db_file = tmp_path / "workday_test.db"
+    captured_companies = []
+
+    async def mock_scan(companies, **kwargs):
+        nonlocal captured_companies
+        captured_companies = companies
+        return []
+
+    with patch("gcc_job_radar.cli.scan_all_companies", side_effect=mock_scan):
+        result = runner.invoke(app, ["scan", "--provider", "workday", "--db", str(db_file)])
+        assert result.exit_code == 0
+        assert len(captured_companies) == 61
+        assert all(c.provider == ATSProvider.WORKDAY for c in captured_companies)
+        assert "WORKDAY" in result.output
+        assert "61" in result.output
+
+
 def test_cli_provider_filter_invalid() -> None:
     """Verify CLI flags unknown provider with exit code 1 and lists valid options."""
     result = runner.invoke(app, ["--provider", "nonexistent_ats_provider"])

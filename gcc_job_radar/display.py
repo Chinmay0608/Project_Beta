@@ -14,14 +14,23 @@ from gcc_job_radar.models import JobPosting
 console = Console(highlight=False)
 
 
-def render_banner(total_companies: int) -> None:
+def render_banner(total_companies: int, provider: Optional[str] = None) -> None:
     """Render a styled introduction banner in the terminal."""
+    if provider:
+        coverage_line = (
+            f"[bold white]Coverage:[/bold white] Monitoring [bold cyan]{total_companies}[/bold cyan] "
+            f"verified boards on [bold magenta]{provider.upper()}[/bold magenta] ATS API"
+        )
+    else:
+        coverage_line = (
+            f"[bold white]Coverage:[/bold white] Monitoring [bold cyan]{total_companies}[/bold cyan] "
+            "tier-1 foreign GCCs & US/EU tech enterprises across canonical ATS APIs ([magenta]Greenhouse, Lever, Ashby, Workday, SmartRecruiters[/magenta])"
+        )
     content = (
         "[bold white]Target:[/bold white] [green]Verified Entry-Level Tech Roles[/green] "
         "(SDE-1, Junior Engineer, Associate, Fresher, Tech Intern)\n"
         "[bold white]Hubs:[/bold white] [yellow]Bengaluru, Hyderabad, Pune, Gurgaon, Noida, Mumbai, Chennai, Remote India[/yellow]\n"
-        f"[bold white]Coverage:[/bold white] Monitoring [bold cyan]{total_companies}[/bold cyan] "
-        "tier-1 foreign GCCs & US/EU tech enterprises across canonical ATS APIs ([magenta]Greenhouse, Lever, Ashby[/magenta])"
+        f"{coverage_line}"
     )
     console.print(
         Panel(

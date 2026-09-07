@@ -217,9 +217,9 @@ async def test_verify_ats_board_smartrecruiters() -> None:
     """Verify SmartRecruiters payload validation."""
     def handler(request: httpx.Request) -> httpx.Response:
         if "sr-total" in str(request.url):
-            return httpx.Response(200, json={"totalFound": 12, "content": []})
+            return httpx.Response(200, json={"totalFound": 12, "content": [{"name": "Software Engineer"}]})
         elif "sr-content" in str(request.url):
-            return httpx.Response(200, json={"totalFound": 0, "content": [{"id": "1"}]})
+            return httpx.Response(200, json={"totalFound": 0, "content": [{"id": "1", "name": "Backend Developer"}]})
         elif "sr-empty" in str(request.url):
             return httpx.Response(200, json={"totalFound": 0, "content": []})
         return httpx.Response(404)
@@ -343,9 +343,9 @@ async def test_run_harvest_mass_ats_dry_run_vs_append(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         url_str = str(request.url)
         if "boards/beta/jobs" in url_str:
-            return httpx.Response(200, json={"jobs": [{"id": 1}]})
+            return httpx.Response(200, json={"jobs": [{"id": 1, "title": "Software Engineer"}]})
         if "postings/gamma" in url_str:
-            return httpx.Response(200, json=[{"id": "1"}])
+            return httpx.Response(200, json=[{"id": "1", "text": "Backend Developer"}])
         return httpx.Response(404)
 
     mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -384,7 +384,7 @@ async def test_run_harvest_mass_ats_target_count_limit(tmp_path: Path) -> None:
     )
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"jobs": [{"id": 1}]})
+        return httpx.Response(200, json={"jobs": [{"id": 1, "title": "Software Engineer"}]})
 
     mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
@@ -396,3 +396,118 @@ async def test_run_harvest_mass_ats_target_count_limit(tmp_path: Path) -> None:
     )
     # Target count was 1, so it should stop at 1
     assert len(results) == 1
+
+
+# --- 7. Tech-Role Gate in verify_ats_board ---
+
+
+@pytest.mark.asyncio
+async def test_verify_ats_board_rejects_pure_non_tech_board() -> None:
+    """verify_ats_board returns None when all sampled job titles are non-tech disciplines."""
+    payload = {
+        "jobs": [
+            {"id": 1, "title": "Mechanical Engineer Trainee"},
+            {"id": 2, "title": "Civil Engineer"},
+            {"id": 3, "title": "HVAC Technician"},
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await verify_ats_board(ATSProvider.GREENHOUSE, "mech-only-board", client)
+        assert result is None, "Board with only non-tech titles must be rejected"
+
+
+@pytest.mark.asyncio
+async def test_verify_ats_board_accepts_pure_tech_board() -> None:
+    """verify_ats_board returns count when all sampled job titles are tech roles."""
+    payload = {
+        "jobs": [
+            {"id": 1, "title": "Software Engineer Trainee"},
+            {"id": 2, "title": "Backend Developer"},
+            {"id": 3, "title": "Data Engineer"},
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await verify_ats_board(ATSProvider.GREENHOUSE, "tech-board", client)
+        assert result == 3, "Board with tech titles must be accepted and return count"
+
+
+@pytest.mark.asyncio
+async def test_verify_ats_board_accepts_mixed_board_with_at_least_one_tech_title() -> None:
+    """verify_ats_board returns count when at least one of the sampled titles is a tech role."""
+    payload = {
+        "jobs": [
+            {"id": 1, "title": "Mechanical Engineer Trainee"},   # non-tech
+            {"id": 2, "title": "Associate Software Engineer"},    # tech ← at least 1 passes
+            {"id": 3, "title": "Civil Engineer"},                 # non-tech
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await verify_ats_board(ATSProvider.GREENHOUSE, "mixed-board", client)
+        assert result == 3, "Board with ≥1 tech title must be accepted"
+
+
+@pytest.mark.asyncio
+async def test_verify_ats_board_lever_rejects_non_tech() -> None:
+    """verify_ats_board rejects a Lever board whose only postings are non-tech."""
+    payload = [
+        {"id": "abc", "text": "Sales Engineer"},
+        {"id": "def", "text": "BDR Representative"},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await verify_ats_board(ATSProvider.LEVER, "sales-board", client)
+        assert result is None, "Lever board with only Sales/BDR titles must be rejected"
+
+
+# --- 8. SimplifyJobs Feed Function ---
+
+
+@pytest.mark.asyncio
+async def test_fetch_simplifyjobs_candidates_extracts_ats_slugs() -> None:
+    """fetch_simplifyjobs_candidates correctly extracts ATS slugs from SimplifyJobs JSON feeds."""
+    from tools.harvest_mass_ats import SIMPLIFYJOBS_FEEDS, fetch_simplifyjobs_candidates
+
+    sample_feed = [
+        {
+            "company_name": "Stripe Inc",
+            "url": "https://boards.greenhouse.io/stripe/jobs/123",
+        },
+        {
+            "company_name": "Atlassian",
+            "url": "https://jobs.lever.co/atlassian/abc-def",
+        },
+        {
+            "company_name": "MechCo",
+            "url": "https://careers.example.com/jobs/123",  # Non-ATS URL, should be ignored
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Return the same feed for both feed URLs
+        return httpx.Response(200, json=sample_feed)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        candidates = await fetch_simplifyjobs_candidates(client)
+
+    # Two ATS slugs should be extracted; the non-ATS URL should be dropped
+    slugs = [(p, s) for _, p, s in candidates]
+    assert (ATSProvider.GREENHOUSE, "stripe") in slugs
+    assert (ATSProvider.LEVER, "atlassian") in slugs
+    # The example.com URL is not a known ATS, must not appear
+    assert all("example" not in s for _, s in slugs)
+

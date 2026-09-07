@@ -406,3 +406,63 @@ async def test_phenom_successfactors_client_errors() -> None:
         )
         jobs = await PhenomSuccessFactorsClient(client).fetch_jobs(company)
         assert jobs == []
+
+
+@pytest.mark.asyncio
+async def test_smartrecruiters_prefers_applyUrl_over_ref() -> None:
+    """applyUrl field takes precedence over ref when building the apply link."""
+    payload = {
+        "content": [
+            {
+                "id": "sr-9001",
+                "name": "Associate Software Engineer",
+                "location": {"city": "Hyderabad", "country": "India"},
+                # ref intentionally points to the raw API – should be ignored
+                "ref": "https://api.smartrecruiters.com/v1/companies/TestCo/postings/sr-9001",
+                "applyUrl": "https://jobs.smartrecruiters.com/TestCo/sr-9001?oga=true",
+                "postingUrl": "https://jobs.smartrecruiters.com/TestCo/sr-9001",
+                "releasedDate": "2026-09-01T00:00:00.000Z",
+            }
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        company = CompanyConfig(name="TestCo", provider=ATSProvider.SMARTRECRUITERS, board_token="TestCo")
+        jobs = await SmartRecruitersClient(client).fetch_jobs(company)
+
+        assert len(jobs) == 1
+        url = str(jobs[0].apply_url)
+        assert "api.smartrecruiters.com" not in url, f"apply_url must not point to API endpoint: {url}"
+        assert "jobs.smartrecruiters.com" in url, f"apply_url must point to candidate page: {url}"
+
+
+@pytest.mark.asyncio
+async def test_smartrecruiters_api_ref_is_never_exposed() -> None:
+    """If only a raw api.smartrecruiters.com ref is present, the scraper falls back to canonical URL."""
+    payload = {
+        "content": [
+            {
+                "id": "sr-9002",
+                "name": "Graduate Software Engineer",
+                "location": {"city": "Pune", "country": "India"},
+                # Only the bad API ref – no applyUrl or postingUrl
+                "ref": "https://api.smartrecruiters.com/v1/companies/BadCo/postings/sr-9002",
+                "releasedDate": "2026-09-01T00:00:00.000Z",
+            }
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        company = CompanyConfig(name="BadCo", provider=ATSProvider.SMARTRECRUITERS, board_token="BadCo")
+        jobs = await SmartRecruitersClient(client).fetch_jobs(company)
+
+        assert len(jobs) == 1
+        url = str(jobs[0].apply_url)
+        assert "api.smartrecruiters.com" not in url, f"apply_url must not be the API endpoint: {url}"
+        assert url == "https://jobs.smartrecruiters.com/BadCo/sr-9002"

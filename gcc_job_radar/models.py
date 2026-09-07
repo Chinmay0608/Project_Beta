@@ -15,6 +15,7 @@ class ATSProvider(str, Enum):
     WORKDAY = "workday"
     PHENOM_SUCCESSFACTORS = "phenom_successfactors"
     EMAIL_ALERT = "email_alert"
+    UNSTOP = "unstop"
 
 
 class JobStatus(str, Enum):
@@ -54,6 +55,7 @@ class JobPosting(BaseModel):
     applied_at: Optional[str] = None
     notes: Optional[str] = None
     direct_search_url: Optional[str] = None
+    description: Optional[str] = None
     relevance_score: Optional[int] = 0
 
 

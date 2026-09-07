@@ -1,22 +1,40 @@
 # gcc-job-radar
 
-> High-performance Python CLI tool that queries canonical ATS APIs (Greenhouse, Lever, Ashby) to aggregate and filter verified entry-level tech roles (SDE-1, Junior Engineer, Associate, Fresher, Tech Intern) in India from non-Indian tech companies and Global Capability Centers (GCCs).
+> High-performance Python CLI tool and personal job-hunt optimization suite that queries canonical ATS APIs (Greenhouse, Lever, Ashby, Workday, SmartRecruiters) to aggregate, filter, score, and track verified entry-level tech roles (SDE-1, Junior Engineer, Associate, Fresher, Tech Intern) in India from non-Indian tech companies and Global Capability Centers (GCCs).
 
 ---
 
 ## Key Features
 
-- **Direct Canonical ATS Integration**:
+- **Direct Canonical ATS Integrations**:
   - **Greenhouse**: `https://boards-api.greenhouse.io`
   - **Lever**: `https://api.lever.co/v0/postings`
   - **Ashby**: `https://api.ashbyhq.com/posting-api`
-- **Curated Company Registry**: Pre-configured with **31 foreign GCCs & high-growth tech companies** operating in India (Databricks, Stripe, Figma, GitLab, Pinterest, Rubrik, Elastic, Cloudflare, Reddit, Couchbase, DoorDash, Brex, Toast, Samsara, Flexport, PostHog, Deel, Docker, Coinbase, Robinhood, Atlassian, Ripple, Fullscript, Kraken, Palantir, Linear, Ramp, Synthesia, Monzo, Notion, Snowflake).
-- **Strict Level & Title Filters**: Specifically surfaces entry-level roles (SDE 1, Junior Engineer, Associate, Fresher, Intern) while strictly disqualifying Senior, Lead, Staff, Principal, Architect, Manager, and numeral levels II through VI.
-- **Indian Hub Geolocation**: Filters positions across Bengaluru, Hyderabad, Pune, Gurgaon, Noida, Mumbai, Chennai, Delhi NCR, and India Remote.
-- **Persistent SQLite State Tracking**: Caches seen postings to highlight only newly discovered roles with `--new-only`.
-- **Instant Webhook Alerts**: Automatic notifications to **Discord** and **Telegram** channels when new listings are detected.
-- **Rich Terminal UI**: Animated progress bars, styled tables, and clickable terminal apply URLs.
-- **Data Export**: Clean export options to JSON (`--json`) and CSV (`--csv`).
+  - Plus Workday, SmartRecruiters, and Phenom/SuccessFactors integrations.
+- **Curated GCC & Tech Hub Directory**: Pre-configured with **150+ foreign GCCs and high-growth enterprise tech companies** operating in India (Databricks, Stripe, Figma, Atlassian, Snowflake, Rubrik, Cisco, BT Group, Celonis, Elastic, Cloudflare, DoorDash, Docker, Coinbase, Robinhood, Ripple, Palantir, and more).
+- **Strict Level & Location Filters**: Surfaces entry-level roles (SDE-1, Junior Software Engineer, Associate, Fresher, Intern) while strictly filtering out Senior, Lead, Staff, Principal, Architect, Manager, and Roman/numeric levels II through VI. Covers Indian tech hubs (Bengaluru, Hyderabad, Pune, Gurgaon, Noida, Mumbai, Chennai, Delhi NCR) and India Remote.
+- **Stack-Relevance Scoring Engine**: 
+  - Automatically calculates bounded **0–100 relevance scores** for each role matching modern backend and full-stack profiles: **Java / Spring Boot 3, MERN (MongoDB, Express, React, Node.js), Kafka, MySQL, Docker, JWT, GitHub Actions**.
+  - Color-coded scores in terminal output (Green for 80+, Yellow for 60–79, Dim/Gray for <60).
+  - Penalizes non-stack roles (e.g. pure iOS, Ruby, Embedded) when target stack keywords are absent.
+- **Application Tracking & Stale Follow-up Pipeline**:
+  - Full application lifecycle tracking: `NEW` ➔ `APPLIED` ➔ `INTERVIEWING` / `REJECTED` / `DISMISSED`.
+  - Automatic stale application tracking: alerts when applications have been pending for more than 7 days (or user-defined threshold) without status updates.
+  - Pipeline summary metrics and follow-up alerts via CLI and Telegram.
+- **Daily Digest Mode**:
+  - Consolidates notifications into a single cleanly-formatted digest per scan instead of spamming individual messages.
+  - Groups discovered roles by company with direct ATS application links.
+  - Supports both **Discord** and **Telegram** webhook/bot deliveries.
+- **Dormant Companies Registry & Activity Tracking**:
+  - Tracks scan history per company; companies with repeated zero-match scans (e.g., 10 consecutive scans) are automatically flagged as dormant to optimize scanning efficiency.
+  - CLI commands to inspect dormant companies and reactivate them at any time.
+- **Conversational AI Career Agent**:
+  - Natural language CLI queries via `gcc-job-radar ask "<question>"`.
+  - Multi-provider resilient LLM chain: **Gemini ➔ Groq ➔ OpenAI ➔ Rule-based NLP**.
+  - Interactive Telegram bot for live scans, status updates, and mobile career advice.
+- **Rich Terminal UI & Flexible Exports**:
+  - Animated progress bars, styled tables, and clickable terminal apply URLs.
+  - Clean export options to JSON (`--json`) and CSV (`--csv`).
 
 ---
 
@@ -24,7 +42,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/gcc-job-radar.git
+git clone https://github.com/Chinmay0608/Project_Beta.git gcc-job-radar
 cd gcc-job-radar
 
 # Install in editable mode
@@ -36,97 +54,183 @@ pip install -e ".[dev]"
 
 ---
 
-## Usage
+## Usage & CLI Commands
 
-### 1. Basic Scan
-Scan all 31 companies across Greenhouse, Lever, and Ashby:
+### 1. Scanning for Roles
+
 ```bash
+# Full scan across all 150+ configured companies
 gcc-job-radar
-```
 
-### 2. Filter to a Specific Company
-Scan a single company by name or slug:
-```bash
+# Scan a single company
 gcc-job-radar --company databricks
-gcc-job-radar --company atlassian
-```
+gcc-job-radar --company celonis
 
-### 3. Track Only New Postings (`--new-only`)
-Use SQLite state tracking to display only newly opened roles since your last scan:
-```bash
+# Display only newly discovered roles (unseen in SQLite)
 gcc-job-radar --new-only
-```
 
-### 4. View Database Tracking Statistics
-View historical counts of tracked roles per company:
-```bash
-gcc-job-radar --stats
-```
+# Filter results by minimum stack-relevance score (0–100)
+gcc-job-radar --min-score 70
 
-### 5. Export Findings to JSON or CSV
-```bash
+# Send a single consolidated daily digest instead of individual alerts
+gcc-job-radar --digest --notify-discord "https://discord.com/api/webhooks/xxx/yyy"
+
+# Export findings to JSON and CSV
 gcc-job-radar --json latest_openings.json --csv latest_openings.csv
 ```
 
-### 6. Instant Discord & Telegram Webhook Alerts
-Pass webhook credentials directly via CLI flags or set environment variables:
-```bash
-# Via CLI flags:
-gcc-job-radar --notify-discord "https://discord.com/api/webhooks/xxx/yyy"
-gcc-job-radar --notify-telegram-token "BOT_TOKEN" --notify-telegram-chat "CHAT_ID"
+### 2. Application Tracking & Follow-ups
 
-# Or via environment variables:
-export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/xxx/yyy"
-export TELEGRAM_BOT_TOKEN="BOT_TOKEN"
-export TELEGRAM_CHAT_ID="CHAT_ID"
-gcc-job-radar --new-only
+Track job applications as your personal daily source of truth:
+
+```bash
+# View stale applications pending follow-up (default: >7 days since applied)
+gcc-job-radar stale
+
+# Check stale applications older than 14 days
+gcc-job-radar stale --days 14
+
+# List tracked applications with pipeline filtering
+gcc-job-radar list --status APPLIED --stale --stale-days 7
+
+# View database statistics and pipeline breakdown
+gcc-job-radar --stats
 ```
 
-### 7. Interactive Telegram Bot (Remote Control)
-Start an interactive long-polling Telegram bot that responds to commands directly on your phone:
-```bash
-gcc-job-radar bot --token "BOT_TOKEN" --chat-id "CHAT_ID"
-```
-**Supported Commands**:
-- `/scan`: Triggers live scan across all 150+ configured GCCs and replies with active openings.
-- `/check <company>`: Scans a specific company (e.g. `/check celonis`, `/check databricks`).
-- `/stats`: Shows database tracking metrics and company breakdown.
-- `/latest`: Shows the 5 most recently discovered postings with direct apply URLs.
-- `/help`: Lists available commands.
+### 3. Managing Dormant Companies
 
-*Security Note: The bot strictly authenticates incoming messages against `--chat-id` (or `TELEGRAM_CHAT_ID`) and rejects unauthorized users.*
+Avoid scanning inactive or paused career portals while keeping tracking flexible:
+
+```bash
+# List all currently dormant companies and their reasons
+gcc-job-radar dormant
+
+# Reactivate a company to resume active scanning
+gcc-job-radar reactivate backblaze
+
+# Auto-dormant flags during scan (mark dormant after 10 consecutive empty scans)
+gcc-job-radar scan --auto-dormant-threshold 10
+```
+
+### 4. Querying the AI Career Agent
+
+Ask questions directly from your terminal using natural language:
+
+```bash
+# Query active listings by stack and location
+gcc-job-radar ask "Are there any Spring Boot or Java backend roles in Bangalore or Hyderabad?"
+
+# Check application status
+gcc-job-radar ask "What roles have I applied to?"
+
+# Inquire about market compensation or interview advice
+gcc-job-radar ask "Which foreign GCCs offer compensation over 15 LPA for freshers?"
+
+# Get database statistics
+gcc-job-radar ask "How many total jobs are tracked in the database?"
+```
 
 ---
 
-## Automating with GitHub Actions (Zero-Server Setup)
+## Interactive Telegram Bot
+
+Start the interactive long-polling bot to receive alerts and manage job applications from your phone:
+
+```bash
+gcc-job-radar bot --token "TELEGRAM_BOT_TOKEN" --chat-id "TELEGRAM_CHAT_ID"
+```
+
+### Supported Bot Commands:
+- `/scan` — Triggers a live scan across all configured GCCs.
+- `/check <company>` — Scans a specific company (e.g. `/check celonis`, `/check databricks`).
+- `/stats` — Displays application pipeline metrics and top tracked companies.
+- `/latest` — Shows the 5 most recently discovered postings with direct ATS apply URLs.
+- `/followups` (or `/stale`) — Shows applied roles awaiting follow-up (>7 days old).
+- `/apply <id or company>` — Marks a role as APPLIED in the tracker.
+- `/dismiss <id or company>` — Dismisses/hides a role from future alerts.
+- Natural Language Chat — Send any question directly in Telegram to talk to the AI agent.
+
+> **Security Note**: The bot strictly authenticates incoming messages against `--chat-id` (or `TELEGRAM_CHAT_ID`) and rejects unauthorized senders.
+
+---
+
+## AI Agent & LLM Configuration
+
+The AI assistant utilizes a resilient multi-provider fallback architecture. If your primary API key is exhausted or encounters rate limits, it automatically shifts to secondary providers, and falls back to a deterministic rule-based NLP engine if no LLM keys are present.
+
+### Environment Variables
+
+Configure your preferred providers in your `.env` file or environment:
+
+```bash
+# Primary: Google Gemini (default model: gemini-2.5-flash / gemini-3.1-flash-lite)
+export GEMINI_API_KEY="AIzaSy..."
+
+# Secondary / Fast Inference: Groq (ultra-fast LPU inference, e.g. llama-3.3-70b-versatile)
+export GROQ_API_KEY="gsk_..."
+
+# Tertiary: OpenAI (model: gpt-4o-mini)
+export OPENAI_API_KEY="sk-..."
+
+# Optional: Set primary provider preference ("gemini" or "groq", default: "gemini")
+export PRIMARY_LLM_PROVIDER="gemini"
+```
+
+### Resilient Fallback Chain:
+
+```
+[User Query]
+      │
+      ▼
+┌──────────────┐     Fails / Unconfigured
+│ Google Gemini│ ────────────────────────► ┌──────────────┐
+└──────────────┘                           │  Groq (LPU)  │
+                                           └──────────────┘
+                                                  │ Fails / Unconfigured
+                                                  ▼
+                                           ┌──────────────┐
+                                           │    OpenAI    │
+                                           └──────────────┘
+                                                  │ Fails / Unconfigured
+                                                  ▼
+                                           ┌──────────────────────┐
+                                           │ Rule-based NLP Engine│ (Zero API key needed)
+                                           └──────────────────────┘
+```
+
+---
+
+## Automating with GitHub Actions
 
 A production-ready GitHub Actions workflow is included at [`.github/workflows/job_radar_cron.yml`](.github/workflows/job_radar_cron.yml).
 
-### How It Works:
+### Workflow Features:
 1. **Scheduled Runs**: Runs automatically every 4 hours (`cron: '0 */4 * * *'`).
 2. **Persistent Database Caching**: Uses `actions/cache@v4` to persist `gcc_jobs.db` across runs, ensuring duplicate alerts are never dispatched.
-3. **Webhook Notifications**: Alerts your Discord channel or Telegram chat whenever a new fresher/SDE-1 role is detected.
+3. **Daily Digest Support**: Dispatches consolidated digests directly to Discord and Telegram.
 4. **Artifact Retention**: Automatically uploads `latest_openings.json` as a build artifact retained for 7 days.
-5. **Manual Triggering**: Can be triggered on-demand via the **Actions** tab in GitHub with an optional company filter.
+5. **Manual Triggering**: Triggerable on-demand via the **Actions** tab with custom company filters and digest flags.
 
-### Setting Up Secrets in GitHub:
-Go to your GitHub repository -> **Settings** -> **Secrets and variables** -> **Actions** -> **New repository secret**:
-
-| Secret Name | Description | Example |
-|---|---|---|
-| `DISCORD_WEBHOOK_URL` | Discord Channel Webhook URL | `https://discord.com/api/webhooks/...` |
-| `TELEGRAM_BOT_TOKEN` | Telegram Bot API Token | `123456789:AAH...` |
-| `TELEGRAM_CHAT_ID` | Telegram Chat or Channel ID | `-100123456789` or `@channel_name` |
-
-*(Note: Secrets are optional; if omitted, the scanner runs silently and records findings to `latest_openings.json`).*
+### GitHub Secrets Setup:
+Configure these in **Settings** ➔ **Secrets and variables** ➔ **Actions**:
+- `DISCORD_WEBHOOK_URL` — Discord webhook URL.
+- `TELEGRAM_BOT_TOKEN` — Telegram Bot API token.
+- `TELEGRAM_CHAT_ID` — Authorized Telegram Chat or Channel ID.
+- `GEMINI_API_KEY` / `GROQ_API_KEY` — (Optional) For automated AI agent analysis.
 
 ---
 
 ## Testing
 
-Run the comprehensive automated test suite (132 test cases covering filters, ATS clients, database, and CLI):
+Run the full automated test suite using `pytest`:
+
 ```bash
 pytest -v
+```
+
+Linting and code quality:
+```bash
+pyflakes gcc_job_radar tools tests
 ```
 
 ---
@@ -142,23 +246,35 @@ gcc-job-radar/
 ├── README.md                    # Documentation
 ├── gcc_job_radar/
 │   ├── __init__.py              # Package version
-│   ├── cli.py                   # Typer CLI runner with rich UI and export options
-│   ├── config.py                # 31 curated companies and regex pattern definitions
+│   ├── cli.py                   # Typer CLI runner with rich UI, flags, and subcommands
+│   ├── config.py                # 150+ curated companies and regex pattern definitions
 │   ├── models.py                # Pydantic data models (JobPosting, CompanyConfig)
-│   ├── filters.py               # Strict title and Indian location matching logic
-│   ├── db.py                    # SQLite persistence layer and state tracking
-│   ├── notifier.py              # Discord and Telegram webhook alert dispatchers
-│   ├── engine.py                # Async concurrent scanning engine (httpx + semaphore)
-│   ├── display.py               # Rich terminal tables, banners, and stats panels
+│   ├── filters.py               # Strict title, level, and Indian location matching logic
+│   ├── relevance.py             # Stack-relevance scoring engine (0-100 bounded score)
+│   ├── dormant_companies.py     # Registry of dormant/paused companies
+│   ├── db.py                    # SQLite persistence, state tracking, stale applications
+│   ├── notifier.py              # Discord & Telegram individual & daily digest dispatchers
+│   ├── scanner.py               # Async concurrent scanning engine (httpx + semaphore)
+│   ├── display.py               # Rich terminal tables, pipeline stats, and stale alerts
+│   ├── ai_agent.py              # Multi-provider LLM conversational AI agent
+│   ├── bot_listener.py          # Interactive Telegram bot daemon
 │   └── clients/
 │       ├── base.py              # Base abstract ATS client
 │       ├── greenhouse.py        # Greenhouse API client
 │       ├── lever.py             # Lever API client
-│       └── ashby.py             # Ashby API client
+│       ├── ashby.py             # Ashby API client
+│       ├── workday.py           # Workday API client
+│       ├── smartrecruiters.py   # SmartRecruiters API client
+│       └── phenom.py            # Phenom/SuccessFactors API client
 └── tests/
     ├── test_filters.py          # Title/location regex positive & negative test suite
-    ├── test_clients.py          # Mocked HTTP tests for Greenhouse, Lever, and Ashby
+    ├── test_clients.py          # Mocked HTTP tests for ATS clients
     ├── test_db.py               # SQLite schema, upsert, and isolation tests
+    ├── test_relevance.py        # Stack-relevance scoring unit tests
+    ├── test_stale_tracking.py   # Stale application tracking & pipeline stats tests
+    ├── test_digest.py           # Consolidated daily digest notification tests
+    ├── test_dormant.py          # Dormant companies registry & reactivation tests
+    ├── test_ask_command.py      # AI agent CLI 'ask' command tests
     ├── test_notifier.py         # Discord & Telegram payload and error handling tests
     └── test_cli.py              # CliRunner tests for flags, exports, and dispatch
 ```

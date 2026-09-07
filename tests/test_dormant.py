@@ -5,7 +5,6 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from gcc_job_radar.cli import app
-from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.db import (
     get_dormant_companies_entries,
     get_dormant_company_names,
@@ -13,7 +12,7 @@ from gcc_job_radar.db import (
     reactivate_company,
     record_company_scan_activity,
 )
-from gcc_job_radar.models import ATSProvider, CompanyConfig, JobPosting
+from gcc_job_radar.models import ATSProvider, CompanyConfig
 
 runner = CliRunner()
 

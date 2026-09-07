@@ -1032,7 +1032,7 @@ async def _call_openai(
 
 async def ask_ai_agent(
     prompt: str,
-    chat_id: str | int,
+    chat_id: str | int = "cli",
     db_path: Optional[Path] = None,
     client: Optional[httpx.AsyncClient] = None,
 ) -> str:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 import typer
+from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 # Automatically load environment variables from .env if present
@@ -28,7 +29,7 @@ from gcc_job_radar.db import (
     mark_job_status,
     query_jobs,
     reactivate_company,
-    record_company_scan_activity,
+    record_companies_scan_activity,
     record_jobs,
 )
 from gcc_job_radar.display import (
@@ -309,9 +310,11 @@ def scan(
         cname = j.company.lower().strip()
         company_match_counts[cname] = company_match_counts.get(cname, 0) + 1
 
-    for c in target_companies:
-        cnt = company_match_counts.get(c.name.lower().strip(), 0)
-        record_company_scan_activity(c.name, cnt, auto_dormant_threshold=auto_dormant_threshold, db_path=db_path)
+    batch_counts = [
+        (c.name, company_match_counts.get(c.name.lower().strip(), 0))
+        for c in target_companies
+    ]
+    record_companies_scan_activity(batch_counts, auto_dormant_threshold=auto_dormant_threshold, db_path=db_path)
 
     new_jobs, existing_jobs = filter_new_jobs(all_jobs, db_path)
 
@@ -579,6 +582,36 @@ def reactivate_command(
     init_db(db_path)
     reactivate_company(company, db_path)
     console.print(f"[bold green][+][/bold green] Reactivated company [cyan]{company}[/cyan] in scanning registry.")
+
+
+@app.command("ask")
+def ask_command(
+    question: str = typer.Argument(
+        ...,
+        help="Question to ask the AI agent about tracked jobs, stats, companies, or recommendations.",
+    ),
+    db_path: Optional[Path] = typer.Option(
+        None,
+        "--db",
+        help="Custom path to SQLite database file.",
+    ),
+) -> None:
+    """Ask the AI agent about jobs, stats, companies, or career recommendations."""
+    init_db(db_path)
+    from gcc_job_radar.ai_agent import ask_ai_agent
+
+    with console.status("[bold cyan]Consulting GCC Job Radar AI Agent...[/bold cyan]"):
+        answer = asyncio.run(ask_ai_agent(prompt=question, chat_id="cli", db_path=db_path))
+
+    console.print()
+    console.print(
+        Panel(
+            answer,
+            title="[bold cyan]GCC Job Radar • AI Career Agent[/bold cyan]",
+            border_style="cyan",
+            padding=(1, 2),
+        )
+    )
 
 
 @app.command("apply")

@@ -28,7 +28,7 @@ if sys.stderr is not None and hasattr(sys.stderr, "reconfigure"):
 load_dotenv()
 from rich.panel import Panel
 
-from gcc_job_radar.ai_agent import ask_ai_agent, clear_chat_history
+from gcc_job_radar.ai_agent import ask_ai_agent, clear_chat_history, sanitize_telegram_html
 from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.db import (
     filter_new_jobs,
@@ -128,9 +128,10 @@ async def send_telegram_reply(
 
     for idx, chunk in enumerate(chunks):
         is_last = (idx == len(chunks) - 1)
+        safe_chunk = sanitize_telegram_html(chunk) if chunk else ""
         payload: dict[str, Any] = {
             "chat_id": chat_id,
-            "text": chunk,
+            "text": safe_chunk or chunk,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
         }

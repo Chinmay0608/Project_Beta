@@ -653,5 +653,31 @@ async def test_send_telegram_reply_html_fallback() -> None:
         assert "<b>" not in sent_payloads[1]["text"]
 
 
+@pytest.mark.asyncio
+async def test_send_telegram_reply_sanitizes_unbalanced_tags() -> None:
+    """Verify send_telegram_reply balances tags before posting to Telegram."""
+    from gcc_job_radar.bot_listener import send_telegram_reply
+
+    sent_payloads = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        data = json.loads(request.content.decode("utf-8"))
+        sent_payloads.append(data)
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        ok = await send_telegram_reply(
+            bot_token="test_token",
+            chat_id=12345,
+            text="<b>Malformed <i>HTML</b>",
+            client=client,
+        )
+
+        assert ok is True
+        assert len(sent_payloads) == 1
+        assert sent_payloads[0]["text"] == "<b>Malformed <i>HTML</i></b>"
+
+
+
 
 

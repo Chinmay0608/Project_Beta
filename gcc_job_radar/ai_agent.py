@@ -1,8 +1,10 @@
 """Interactive conversational AI job assistant for GCC Job Radar."""
 
 import html
+from html.parser import HTMLParser
 import json
 import logging
+
 import os
 from pathlib import Path
 import re
@@ -501,6 +503,64 @@ def convert_markdown_tables_to_cards(text: str) -> str:
     return "\n".join(new_lines)
 
 
+class TelegramHTMLSanitizer(HTMLParser):
+    """Enforces strictly balanced, properly nested HTML tags for Telegram Bot API."""
+
+    ALLOWED_TAGS = {"b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre", "a", "blockquote"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stack: list[str] = []
+        self.out: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        tag = tag.lower()
+        if tag not in self.ALLOWED_TAGS:
+            return
+        attr_str = ""
+        if tag == "a":
+            href = dict(attrs).get("href", "")
+            if href:
+                attr_str = f' href="{html.escape(href, quote=True)}"'
+            else:
+                return
+        self.stack.append(tag)
+        self.out.append(f"<{tag}{attr_str}>")
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag not in self.ALLOWED_TAGS or tag not in self.stack:
+            return
+        # Pop down to tag, closing in proper reverse order so tags are NEVER uncrossed or overlapping
+        while self.stack:
+            top = self.stack.pop()
+            self.out.append(f"</{top}>")
+            if top == tag:
+                break
+
+    def handle_data(self, data: str) -> None:
+        self.out.append(html.escape(data, quote=False))
+
+    def get_clean_html(self) -> str:
+        # Close any lingering tags at end of message
+        while self.stack:
+            top = self.stack.pop()
+            self.out.append(f"</{top}>")
+        return "".join(self.out)
+
+
+def sanitize_telegram_html(text: str) -> str:
+    """Strictly balance and validate HTML tags for Telegram Bot API."""
+    if not text:
+        return ""
+    try:
+        parser = TelegramHTMLSanitizer()
+        parser.feed(text)
+        return parser.get_clean_html().strip()
+    except Exception:
+        return re.sub(r"<[^>]+>", "", text).strip()
+
+
 def markdown_to_telegram_html(text: str) -> str:
     """Convert common markdown patterns to safe Telegram HTML."""
     if not text:
@@ -541,7 +601,9 @@ def markdown_to_telegram_html(text: str) -> str:
             part = re.sub(r"(?<![_\w])_([^_\s](?:[^_]*?[^_\s])?)_(?![_\w])", r"<i>\1</i>", part)
             escaped_parts.append(part)
 
-    return "".join(escaped_parts).strip()
+    raw_html = "".join(escaped_parts).strip()
+    return sanitize_telegram_html(raw_html)
+
 
 
 def format_jobs_html(jobs: list[dict[str, Any]], title: str) -> str:

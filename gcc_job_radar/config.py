@@ -5,6 +5,10 @@ from gcc_job_radar.models import ATSProvider, CompanyConfig
 
 # Curated registry of 150+ enterprise GCCs, global retail tech hubs, Fortune 500 tech centers in India
 COMPANIES: list[CompanyConfig] = [
+    CompanyConfig(name="Amazon", provider=ATSProvider.AMAZON, board_token="amazon"),
+    CompanyConfig(name="CAKE", provider="greenhouse", board_token="cakeai"),
+
+    CompanyConfig(name="Aviso", provider="smartrecruiters", board_token="avisoai"),
     CompanyConfig(name="Skin Analytics", provider="ashby", board_token="skin-analytics"),
     CompanyConfig(name="3Play Media", provider="greenhouse", board_token="3playmedia"),
     CompanyConfig(name="AWR", provider="greenhouse", board_token="awr"),

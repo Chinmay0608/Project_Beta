@@ -226,6 +226,9 @@ def resolve_company_career_portal(company: str) -> Optional[str]:
                 return f"https://{token}.wd{cluster}.myworkdayjobs.com"
             elif prov == ATSProvider.PHENOM_SUCCESSFACTORS:
                 return token if token.startswith(("http://", "https://")) else f"https://{token}"
+            elif prov == ATSProvider.AMAZON:
+                return "https://www.amazon.jobs"
+
     except Exception:
         pass
 

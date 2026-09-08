@@ -16,6 +16,7 @@ class ATSProvider(str, Enum):
     PHENOM_SUCCESSFACTORS = "phenom_successfactors"
     EMAIL_ALERT = "email_alert"
     UNSTOP = "unstop"
+    AMAZON = "amazon"
 
 
 class JobStatus(str, Enum):

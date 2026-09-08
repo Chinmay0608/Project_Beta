@@ -25,6 +25,12 @@ jobs:
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      EMAIL_USER: ${{ secrets.EMAIL_USER }}
+      EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+      EMAIL_USER_2: ${{ secrets.EMAIL_USER_2 }}
+      EMAIL_PASSWORD_2: ${{ secrets.EMAIL_PASSWORD_2 }}
+      EMAIL_USER_3: ${{ secrets.EMAIL_USER_3 }}
+      EMAIL_PASSWORD_3: ${{ secrets.EMAIL_PASSWORD_3 }}
 
     steps:
       - name: Checkout repository
@@ -49,6 +55,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
 
+      - name: Ingest Job Alert Emails
+        if: env.EMAIL_USER != '' && env.EMAIL_PASSWORD != ''
+        run: |
+          python tools/ingest_email.py --days 1 --limit 50 || echo "Email sync warning"
+
       - name: Run GCC Job Radar Scan
         run: |
           SCAN_ARGS="--new-only --json latest_openings.json"
@@ -60,6 +71,7 @@ jobs:
           else
             gcc-job-radar $SCAN_ARGS
           fi
+
 
       - name: Upload latest openings artifact
         if: always()

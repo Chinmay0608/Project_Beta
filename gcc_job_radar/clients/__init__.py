@@ -1,5 +1,6 @@
 """ATS API clients module."""
 
+from gcc_job_radar.clients.amazon import AmazonClient
 from gcc_job_radar.clients.ashby import AshbyClient
 from gcc_job_radar.clients.base import BaseATSClient
 from gcc_job_radar.clients.greenhouse import GreenhouseClient
@@ -10,6 +11,7 @@ from gcc_job_radar.clients.workday import WorkdayClient
 
 __all__ = [
     "BaseATSClient",
+    "AmazonClient",
     "GreenhouseClient",
     "LeverClient",
     "AshbyClient",
@@ -17,3 +19,4 @@ __all__ = [
     "WorkdayClient",
     "PhenomSuccessFactorsClient",
 ]
+

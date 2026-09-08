@@ -51,8 +51,15 @@ SYSTEM_PROMPT = (
     "  • Foreign GCCs & Enterprise Tech Hubs (e.g. BT Group, Google, Microsoft, Morgan Stanley, Snowflake, Databricks, Celonis, Cisco, Walmart): Entry-level Associate / Graduate Engineers typically receive ₹11 – 24+ LPA (readily crossing ₹12 LPA).\n"
     "  • Telecom / IT Service MNCs (e.g. Ericsson, Nokia, TCS, Infosys, Wipro, Cognizant): Entry-level Associate Engineers / Graduate Trainees typically receive ₹3.5 – 6.5 LPA (rarely exceeding ₹7 LPA).\n"
     "  • Early-Stage Agencies / Staffing Portals (e.g. Talentd, NexisGrow aggregators): Placements typically fall in the ₹3 – 6 LPA range.\n"
-    "  • Boutique Traders / Small Unverified Shops (e.g. Devmani Traders): Internships typically offer modest stipends (₹10k – 25k/month), far below high-tier CTCs.\n"
     "- Deliver an immediate, clear, direct, and well-reasoned comparative verdict with specific CTC estimates without running live scans.\n\n"
+    "DOMAIN KNOWLEDGE FOR RELEVANCE SCORE POINTS (e.g. '[15 pts]', '[10 pts]', '[25 pts]', '[45 pts]'):\n"
+    "- When the user asks what the points mean (e.g. 'what does these points mean', 'what is pts', 'what are the points', 'how are points calculated', 'why does this role have 15 pts?'):\n"
+    "  • The points represent the Personal Tech-Stack Relevance Score (0 to 100) calculated automatically for each job posting based on how closely it matches the candidate's core skills:\n"
+    "    - Core Stack Matches (+20 to +25 pts each): Java, Spring Boot 3, MERN (MongoDB, Express, React, Node.js), Apache Kafka, MySQL.\n"
+    "    - Architecture & DevOps (+10 to +15 pts each): Docker, JWT Auth, GitHub Actions, CI/CD, Microservices / REST APIs.\n"
+    "    - Supporting Tech (+5 to +10 pts each): TypeScript, SQL/PostgreSQL, Redis, Git, Linux.\n"
+    "    - Title Affinity Bonus (+10 to +20 pts): Backend Developer, Full Stack, Java Developer, SDE / Software Engineer.\n"
+    "  • Higher points indicate a higher match with the candidate's target tech stack. Roles with 0 pts are still verified entry-level tech roles, but without explicit keywords matching those specific stack skills in their title or description.\n\n"
     "CRITICAL FORMATTING GUIDELINES FOR TELEGRAM:\n"
     "- NEVER use markdown tables (no '| ... |' format). Telegram cannot render tables and they look broken and unreadable on mobile screens.\n"
     "- When presenting jobs, ALWAYS present each job as a clean, structured card with emojis and markdown links:\n"
@@ -63,6 +70,7 @@ SYSTEM_PROMPT = (
     "- If multiple jobs are found, separate each job card with a blank line.\n"
     "- Keep answers concise, crisp, and conversational. Avoid walls of text."
 )
+
 
 # Tool Schemas for Gemini & OpenAI
 
@@ -523,8 +531,9 @@ def markdown_to_telegram_html(text: str) -> str:
             # Restore markdown links [title](url) -> <a href="url">title</a>
             part = re.sub(r"\[([^\]]+)\]\((https?://[^\)]+)\)", r'<a href="\2">\1</a>', part)
             # Bold **text** or __text__ -> <b>text</b>
-            part = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", part)
-            part = re.sub(r"__([^_]+)__", r"<b>\1</b>", part)
+            part = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", part)
+            part = re.sub(r"__(.+?)__", r"<b>\1</b>", part)
+
             # Inline code `code` -> <code>code</code>
             part = re.sub(r"`([^`]+)`", r"<code>\1</code>", part)
             # Italics *text* or _text_ -> <i>text</i> (excluding word boundaries or whitespace)
@@ -638,9 +647,33 @@ async def _fallback_response(
 ) -> str:
     """Rule-based natural language parsing and intent matching when no LLM key is configured."""
     q = query.lower().strip()
+    # 0. Question about points / score / pts (e.g. "what does these points means", "what is pts")
+    is_points_query = (
+
+        any(phrase in q for phrase in [
+            "what does these points mean", "what do these points mean", "what does this point mean",
+            "what does the points mean", "what do the points mean", "what is pts", "what are pts",
+            "what are the points", "what does points mean", "what do points mean", "explain points",
+            "how are points calculated", "relevance score", "score meaning", "points meaning",
+            "what is the meaning of points", "what is the meaning of pts"
+        ])
+        or ("point" in q and any(w in q for w in ["what", "how", "mean", "why", "explain", "pts"]))
+        or ("pts" in q and any(w in q for w in ["what", "mean", "why", "explain"]))
+    )
+    if is_points_query:
+        return (
+            "🎯 <b>What do the points (e.g. <code>[15 pts]</code>, <code>[10 pts]</code>) mean?</b>\n\n"
+            "The points represent your <b>Personal Tech-Stack Relevance Score</b> (0 to 100), calculated automatically for each role based on how strongly it matches your target skillset:\n\n"
+            "• <b>Core Stack (+20 to +25 pts each):</b> Java, Spring Boot 3, MERN (MongoDB, Express, React, Node.js), Apache Kafka, MySQL\n"
+            "• <b>Architecture & DevOps (+10 to +15 pts each):</b> Docker, JWT Authentication, GitHub Actions, CI/CD, Microservices / REST APIs\n"
+            "• <b>Supporting Tech (+5 to +10 pts each):</b> TypeScript, SQL/PostgreSQL, Redis, Git, Linux\n"
+            "• <b>Title Affinity Bonus (+10 to +20 pts):</b> Backend Developer, Full Stack, SDE / Software Engineer\n\n"
+            "🏆 <b>Higher points = Stronger match</b> for your technical profile! Roles with 0 pts are still verified entry-level tech openings, but without explicit keywords from your primary tech stack in the job title/description."
+        )
 
     # 0a. Query applied jobs intent (e.g. "pull out the applied sheet", "applied list", "show applied roles", "where are rest")
     is_applied_query = (
+
         q in ("applied", "applications", "applied list", "applied sheet", "my applications")
         or any(phrase in q for phrase in [
             "applied sheet", "applied list", "applied jobs", "applied roles",

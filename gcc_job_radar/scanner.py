@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import httpx
 import orjson
 
+from gcc_job_radar.clients.amazon import AmazonClient
 from gcc_job_radar.clients.ashby import AshbyClient
 from gcc_job_radar.clients.base import DEFAULT_TIMEOUT
 from gcc_job_radar.clients.greenhouse import GreenhouseClient
@@ -51,6 +52,7 @@ DEFAULT_DOMAIN_LIMITS: dict[str, int] = {
     "ashbyhq.com": 5,
     "smartrecruiters.com": 5,
     "myworkdayjobs.com": 5,
+    "amazon.jobs": 5,
 }
 
 
@@ -66,7 +68,10 @@ def get_company_domain(company: CompanyConfig) -> str:
         return "smartrecruiters.com"
     elif company.provider == ATSProvider.WORKDAY:
         return "myworkdayjobs.com"
+    elif company.provider == ATSProvider.AMAZON:
+        return "amazon.jobs"
     elif company.provider == ATSProvider.PHENOM_SUCCESSFACTORS:
+
         token = company.board_token.strip()
         if token.startswith("http://") or token.startswith("https://"):
             parsed = urlparse(token)
@@ -194,7 +199,10 @@ async def fetch_single_company(company: CompanyConfig, client: httpx.AsyncClient
         ats_client = WorkdayClient(client)
     elif company.provider == ATSProvider.PHENOM_SUCCESSFACTORS:
         ats_client = PhenomSuccessFactorsClient(client)
+    elif company.provider == ATSProvider.AMAZON:
+        ats_client = AmazonClient(client)
     else:
+
         logger.warning("Unsupported ATS provider: %s", company.provider)
         return []
 

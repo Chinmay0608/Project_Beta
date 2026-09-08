@@ -755,3 +755,17 @@ async def test_groq_413_payload_too_large_smart_shift(monkeypatch: pytest.Monkey
         reply = await ask_ai_agent("all openings", chat_id="chat-413-shift", client=client)
         assert "Successfully shifted to Gemini after Groq 413!" in reply
 
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_points_explanation(monkeypatch) -> None:
+    """Test AI agent explains relevance score points in fallback when asked."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    reply = await ask_ai_agent("What does these points means", chat_id="test-pts-query")
+    assert "Personal Tech-Stack Relevance Score" in reply
+    assert "Java" in reply
+    assert "Core Stack" in reply
+
+

@@ -1,6 +1,6 @@
 # gcc-job-radar
 
-> High-performance Python CLI tool and personal job-hunt optimization suite that queries canonical ATS APIs (Greenhouse, Lever, Ashby, Workday, SmartRecruiters) to aggregate, filter, score, and track verified entry-level tech roles (SDE-1, Junior Engineer, Associate, Fresher, Tech Intern) in India from non-Indian tech companies and Global Capability Centers (GCCs).
+> High-performance Python CLI tool and personal job-hunt optimization suite that queries canonical ATS APIs (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Amazon Jobs, Phenom) and multi-account email alerts to aggregate, filter, score, and track verified entry-level tech roles (SDE-1, Junior Engineer, Associate, Fresher, Tech Intern) in India from 4,800+ global tech companies and Global Capability Centers (GCCs).
 
 ---
 
@@ -10,11 +10,17 @@
   - **Greenhouse**: `https://boards-api.greenhouse.io`
   - **Lever**: `https://api.lever.co/v0/postings`
   - **Ashby**: `https://api.ashbyhq.com/posting-api`
-  - Plus Workday, SmartRecruiters, and Phenom/SuccessFactors integrations.
-- **Curated GCC & Tech Hub Directory**: Pre-configured with **150+ foreign GCCs and high-growth enterprise tech companies** operating in India (Databricks, Stripe, Figma, Atlassian, Snowflake, Rubrik, Cisco, BT Group, Celonis, Elastic, Cloudflare, DoorDash, Docker, Coinbase, Robinhood, Ripple, Palantir, and more).
+  - **Amazon Jobs**: Direct API querying `https://www.amazon.jobs/en/search.json` for India SDE-1 and tech roles.
+  - **Workday & SmartRecruiters**: Native enterprise career site integrations.
+  - **Phenom / SuccessFactors**: Career portal scrapers for enterprise GCCs.
+- **Multi-Account Email Job Alert Ingestion (IMAP SSL)**:
+  - Ingests job alerts from **LinkedIn, Naukri, Indeed, and Glassdoor** delivered to up to multiple configured email accounts (`EMAIL_USER`, `EMAIL_USER_2`, etc.).
+  - Extracts job cards, resolves canonical career portals, filters through entry-level criteria, and stores them in SQLite.
+  - Recruiter revert detector (`check_reverts`) to monitor interview invitations and online assessments (OA).
+- **Curated GCC & Tech Hub Directory**: Pre-configured with **4,800+ foreign GCCs, high-growth startups, and enterprise tech companies** operating in India (Amazon, Databricks, Stripe, Figma, Atlassian, Snowflake, Rubrik, Cisco, BT Group, Celonis, Elastic, Cloudflare, DoorDash, Docker, Coinbase, Robinhood, Ripple, Palantir, and more).
 - **Strict Level & Location Filters**: Surfaces entry-level roles (SDE-1, Junior Software Engineer, Associate, Fresher, Intern) while strictly filtering out Senior, Lead, Staff, Principal, Architect, Manager, and Roman/numeric levels II through VI. Covers Indian tech hubs (Bengaluru, Hyderabad, Pune, Gurgaon, Noida, Mumbai, Chennai, Delhi NCR) and India Remote.
 - **Stack-Relevance Scoring Engine**: 
-  - Automatically calculates bounded **0–100 relevance scores** for each role matching modern backend and full-stack profiles: **Java / Spring Boot 3, MERN (MongoDB, Express, React, Node.js), Kafka, MySQL, Docker, JWT, GitHub Actions**.
+  - Automatically calculates bounded **0–100 relevance scores (`[pts]`)** for each role matching modern backend and full-stack profiles: **Java / Spring Boot 3, MERN (MongoDB, Express, React, Node.js), Kafka, MySQL, Docker, JWT, GitHub Actions**.
   - Color-coded scores in terminal output (Green for 80+, Yellow for 60–79, Dim/Gray for <60).
   - Penalizes non-stack roles (e.g. pure iOS, Ruby, Embedded) when target stack keywords are absent.
 - **Application Tracking & Stale Follow-up Pipeline**:
@@ -25,14 +31,12 @@
   - Consolidates notifications into a single cleanly-formatted digest per scan instead of spamming individual messages.
   - Groups discovered roles by company with direct ATS application links.
   - Supports both **Discord** and **Telegram** webhook/bot deliveries.
-- **Dormant Companies Registry & Activity Tracking**:
-  - Tracks scan history per company; companies with repeated zero-match scans (e.g., 10 consecutive scans) are automatically flagged as dormant to optimize scanning efficiency.
-  - CLI commands to inspect dormant companies and reactivate them at any time.
 - **Conversational AI Career Agent**:
   - Natural language CLI queries via `gcc-job-radar ask "<question>"`.
-  - Multi-provider resilient LLM chain: **Gemini ➔ Groq ➔ OpenAI ➔ Rule-based NLP**.
-  - Interactive Telegram bot for live scans, status updates, and mobile career advice.
+  - Multi-provider resilient LLM chain: **Groq (LPU) ➔ Gemini ➔ OpenAI ➔ Rule-based NLP**.
+  - Interactive Telegram bot for live scans, status updates, mobile career advice, and one-click application tracking.
 - **Rich Terminal UI & Flexible Exports**:
+  - Windows launcher script (`.\gcc.bat`) for quick execution without manual venv activation.
   - Animated progress bars, styled tables, and clickable terminal apply URLs.
   - Clean export options to JSON (`--json`) and CSV (`--csv`).
 
@@ -216,7 +220,11 @@ Configure these in **Settings** ➔ **Secrets and variables** ➔ **Actions**:
 - `DISCORD_WEBHOOK_URL` — Discord webhook URL.
 - `TELEGRAM_BOT_TOKEN` — Telegram Bot API token.
 - `TELEGRAM_CHAT_ID` — Authorized Telegram Chat or Channel ID.
+- `EMAIL_USER` / `EMAIL_PASSWORD` — Primary email address & Google App Password for job alerts.
+- `EMAIL_USER_2` / `EMAIL_PASSWORD_2` — (Optional) Secondary email account.
+- `EMAIL_USER_3` / `EMAIL_PASSWORD_3` — (Optional) Tertiary / college email account.
 - `GEMINI_API_KEY` / `GROQ_API_KEY` — (Optional) For automated AI agent analysis.
+
 
 ---
 
@@ -242,14 +250,16 @@ gcc-job-radar/
 ├── .github/
 │   └── workflows/
 │       └── job_radar_cron.yml   # 4-hour scheduled GitHub Actions workflow
+├── gcc.bat                      # Windows launcher for bot, scan, and CLI
 ├── pyproject.toml               # Package metadata, dependencies, entry points
 ├── README.md                    # Documentation
 ├── gcc_job_radar/
 │   ├── __init__.py              # Package version
 │   ├── cli.py                   # Typer CLI runner with rich UI, flags, and subcommands
-│   ├── config.py                # 150+ curated companies and regex pattern definitions
+│   ├── config.py                # 4,800+ curated companies and regex pattern definitions
 │   ├── models.py                # Pydantic data models (JobPosting, CompanyConfig)
 │   ├── filters.py               # Strict title, level, and Indian location matching logic
+│   ├── link_resolver.py         # Link resolution, canonical ATS unwrapping, and direct search
 │   ├── relevance.py             # Stack-relevance scoring engine (0-100 bounded score)
 │   ├── dormant_companies.py     # Registry of dormant/paused companies
 │   ├── db.py                    # SQLite persistence, state tracking, stale applications
@@ -260,12 +270,18 @@ gcc-job-radar/
 │   ├── bot_listener.py          # Interactive Telegram bot daemon
 │   └── clients/
 │       ├── base.py              # Base abstract ATS client
+│       ├── amazon.py            # Amazon Jobs search API client
 │       ├── greenhouse.py        # Greenhouse API client
 │       ├── lever.py             # Lever API client
 │       ├── ashby.py             # Ashby API client
 │       ├── workday.py           # Workday API client
 │       ├── smartrecruiters.py   # SmartRecruiters API client
-│       └── phenom.py            # Phenom/SuccessFactors API client
+│       └── phenom_successfactors.py # Phenom/SuccessFactors API client
+├── tools/
+│   ├── ingest_email.py          # Multi-account IMAP email job alert ingestion
+│   ├── check_reverts.py         # Recruiter interview & assessment revert detector
+│   └── probe_yc.py              # High-throughput company discovery engine
+
 └── tests/
     ├── test_filters.py          # Title/location regex positive & negative test suite
     ├── test_clients.py          # Mocked HTTP tests for ATS clients

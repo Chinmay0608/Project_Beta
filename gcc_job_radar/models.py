@@ -17,6 +17,8 @@ class ATSProvider(str, Enum):
     EMAIL_ALERT = "email_alert"
     UNSTOP = "unstop"
     AMAZON = "amazon"
+    MICROSOFT = "microsoft"
+    APPLE = "apple"
 
 
 class JobStatus(str, Enum):

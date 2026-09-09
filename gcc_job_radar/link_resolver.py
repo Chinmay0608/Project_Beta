@@ -20,6 +20,10 @@ DIRECT_ATS_DOMAINS: tuple[str, ...] = (
     "breezy.hr",
     "recruitee.com",
     "icims.com",
+    "amazon.jobs",
+    "jobs.apple.com",
+    "apply.careers.microsoft.com",
+    "microsoft.eightfold.ai",
 )
 
 AGGREGATOR_DOMAINS: tuple[str, ...] = (
@@ -228,6 +232,10 @@ def resolve_company_career_portal(company: str) -> Optional[str]:
                 return token if token.startswith(("http://", "https://")) else f"https://{token}"
             elif prov == ATSProvider.AMAZON:
                 return "https://www.amazon.jobs"
+            elif prov == ATSProvider.MICROSOFT:
+                return "https://apply.careers.microsoft.com"
+            elif prov == ATSProvider.APPLE:
+                return "https://jobs.apple.com/en-in/search"
 
     except Exception:
         pass

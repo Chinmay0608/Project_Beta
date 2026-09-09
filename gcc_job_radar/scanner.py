@@ -10,10 +10,12 @@ import httpx
 import orjson
 
 from gcc_job_radar.clients.amazon import AmazonClient
+from gcc_job_radar.clients.apple import AppleClient
 from gcc_job_radar.clients.ashby import AshbyClient
 from gcc_job_radar.clients.base import DEFAULT_TIMEOUT
 from gcc_job_radar.clients.greenhouse import GreenhouseClient
 from gcc_job_radar.clients.lever import LeverClient
+from gcc_job_radar.clients.microsoft import MicrosoftClient
 from gcc_job_radar.clients.phenom_successfactors import PhenomSuccessFactorsClient
 from gcc_job_radar.clients.smartrecruiters import SmartRecruitersClient
 from gcc_job_radar.clients.workday import WorkdayClient
@@ -53,6 +55,8 @@ DEFAULT_DOMAIN_LIMITS: dict[str, int] = {
     "smartrecruiters.com": 5,
     "myworkdayjobs.com": 5,
     "amazon.jobs": 5,
+    "microsoft.eightfold.ai": 5,
+    "jobs.apple.com": 5,
 }
 
 
@@ -70,6 +74,10 @@ def get_company_domain(company: CompanyConfig) -> str:
         return "myworkdayjobs.com"
     elif company.provider == ATSProvider.AMAZON:
         return "amazon.jobs"
+    elif company.provider == ATSProvider.MICROSOFT:
+        return "microsoft.eightfold.ai"
+    elif company.provider == ATSProvider.APPLE:
+        return "jobs.apple.com"
     elif company.provider == ATSProvider.PHENOM_SUCCESSFACTORS:
 
         token = company.board_token.strip()
@@ -201,6 +209,10 @@ async def fetch_single_company(company: CompanyConfig, client: httpx.AsyncClient
         ats_client = PhenomSuccessFactorsClient(client)
     elif company.provider == ATSProvider.AMAZON:
         ats_client = AmazonClient(client)
+    elif company.provider == ATSProvider.MICROSOFT:
+        ats_client = MicrosoftClient(client)
+    elif company.provider == ATSProvider.APPLE:
+        ats_client = AppleClient(client)
     else:
 
         logger.warning("Unsupported ATS provider: %s", company.provider)

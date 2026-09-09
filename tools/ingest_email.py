@@ -221,7 +221,7 @@ def get_configured_email_accounts(
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-                m_user = re.match(r"^EMAIL_USER(?:_(\d+))?\s*=\s*(.*)$", line)
+                m_user = re.match(r"^EMAIL_USER(?:_?(\d+))?\s*=\s*(.*)$", line)
                 if m_user:
                     idx, val = m_user.group(1), m_user.group(2).strip("\"' ")
                     if idx:
@@ -233,7 +233,7 @@ def get_configured_email_accounts(
                             current_pass = None
                         current_user = val
                     continue
-                m_pass = re.match(r"^EMAIL_PASSWORD(?:_(\d+))?\s*=\s*(.*)$", line)
+                m_pass = re.match(r"^EMAIL_PASSWORD(?:_?(\d+))?\s*=\s*(.*)$", line)
                 if m_pass:
                     idx, val = m_pass.group(1), m_pass.group(2).strip("\"' ")
                     if idx:
@@ -265,8 +265,8 @@ def get_configured_email_accounts(
     # Check for any environment variables like EMAIL_USER_1, EMAIL_PASSWORD_1
     idx = 1
     while True:
-        eu = os.getenv(f"EMAIL_USER_{idx}")
-        ep = os.getenv(f"EMAIL_PASSWORD_{idx}")
+        eu = os.getenv(f"EMAIL_USER_{idx}") or os.getenv(f"EMAIL_USER{idx}")
+        ep = os.getenv(f"EMAIL_PASSWORD_{idx}") or os.getenv(f"EMAIL_PASSWORD{idx}")
         if eu and ep:
             accounts.append((eu.strip(), ep.strip()))
             idx += 1
@@ -952,6 +952,7 @@ def sync_email_alerts(
     search_query: Optional[str] = None,
     db_path: Optional[Path] = None,
     imap_client: Optional[imaplib.IMAP4_SSL] = None,
+    notify: bool = False,
 ) -> list[JobPosting]:
     """Execute complete email alert synchronization pipeline across all configured mailboxes."""
     console.print("[bold cyan]=== EMAIL JOB ALERT INGESTION (IMAP SSL) ===[/bold cyan]")
@@ -1053,6 +1054,19 @@ def sync_email_alerts(
     # 3. Store qualified postings into database
     if qualified_postings:
         record_jobs(qualified_postings, db_path=db_path)
+        if notify:
+            import asyncio
+            from gcc_job_radar.notifier import dispatch_notifications
+            try:
+                asyncio.run(
+                    dispatch_notifications(
+                        new_jobs=qualified_postings,
+                        db_path=db_path,
+                        digest=True,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("Failed to dispatch notifications for email jobs: %s", exc)
 
     return qualified_postings
 
@@ -1119,6 +1133,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Custom path to SQLite database file.",
     )
+    parser.add_argument(
+        "--notify",
+        action="store_true",
+        default=False,
+        help="Dispatch notification (Telegram/Discord digest) for qualified jobs.",
+    )
     return parser
 
 
@@ -1139,6 +1159,7 @@ def main() -> None:
             unread_only=args.unread_only,
             search_query=args.query,
             db_path=args.db,
+            notify=args.notify,
         )
         render_results(jobs, is_new_only=False)
     except MissingEmailCredentialsError as e:

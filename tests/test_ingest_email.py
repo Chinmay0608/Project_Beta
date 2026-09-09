@@ -962,3 +962,26 @@ def test_sync_email_alerts_multi_account_pipeline(tmp_path: Path):
         assert "Alpha GCC" in companies
         assert "Beta GCC" in companies
 
+
+def test_sync_email_alerts_notify(tmp_path: Path):
+    """Verify sync_email_alerts triggers dispatch_notifications when notify=True."""
+    db_file = tmp_path / "email_notify.db"
+    init_db(db_file)
+
+    msg = EmailMessage()
+    msg["From"] = "jobalerts-noreply@linkedin.com"
+    msg["Subject"] = "Jobs for you"
+    msg.set_content(
+        '<a href="https://www.linkedin.com/jobs/view/10000001/">Software Engineer I</a>'
+        '<div><span>Acme Tech</span> · <span>Bengaluru, India</span></div>',
+        subtype="html",
+    )
+
+    with patch("tools.ingest_email.get_configured_email_accounts", return_value=[("u@x.com", "p")]), \
+         patch("tools.ingest_email.fetch_unread_alert_emails", return_value=[("1", msg)]), \
+         patch("gcc_job_radar.notifier.dispatch_notifications") as mock_dispatch:
+        jobs = sync_email_alerts(db_path=db_file, notify=True)
+        assert len(jobs) >= 1
+        assert mock_dispatch.called
+
+

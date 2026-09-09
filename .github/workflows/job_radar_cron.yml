@@ -27,10 +27,10 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       EMAIL_USER: ${{ secrets.EMAIL_USER }}
       EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-      EMAIL_USER_2: ${{ secrets.EMAIL_USER_2 }}
-      EMAIL_PASSWORD_2: ${{ secrets.EMAIL_PASSWORD_2 }}
-      EMAIL_USER_3: ${{ secrets.EMAIL_USER_3 }}
-      EMAIL_PASSWORD_3: ${{ secrets.EMAIL_PASSWORD_3 }}
+      EMAIL_USER_2: ${{ secrets.EMAIL_USER_2 || secrets.EMAIL_USER2 }}
+      EMAIL_PASSWORD_2: ${{ secrets.EMAIL_PASSWORD_2 || secrets.EMAIL_PASSWORD2 }}
+      EMAIL_USER_3: ${{ secrets.EMAIL_USER_3 || secrets.EMAIL_USER3 }}
+      EMAIL_PASSWORD_3: ${{ secrets.EMAIL_PASSWORD_3 || secrets.EMAIL_PASSWORD3 }}
 
     steps:
       - name: Checkout repository
@@ -58,7 +58,7 @@ jobs:
       - name: Ingest Job Alert Emails
         if: env.EMAIL_USER != '' && env.EMAIL_PASSWORD != ''
         run: |
-          python tools/ingest_email.py --days 1 --limit 50 || echo "Email sync warning"
+          python tools/ingest_email.py --days 1 --limit 50 --notify || echo "Email sync warning"
 
       - name: Run GCC Job Radar Scan
         run: |

@@ -47,6 +47,7 @@ SYSTEM_PROMPT = (
     "- ONLY invoke `check_company_live` when the user explicitly requests to scan, check, or refresh active openings at a specific company (e.g. 'check Databricks live', 'scan Celonis').\n"
     "- ONLY invoke `query_jobs` when the user is explicitly searching for open job listings in the database by title, keyword, city, or company (e.g. 'find python roles in Bangalore').\n"
     "- Use `get_applied_jobs` whenever the user asks for their applied jobs, application history, applied sheet, applied list, or asks 'where are the rest of my applications'. ALWAYS invoke `get_applied_jobs` to retrieve the authentic list of applied jobs from the database instead of guessing from recent chat context.\n"
+    "- Use `get_dismissed_jobs` whenever the user asks for dismissed jobs, dismissed companies, hidden jobs, 'name of all', 'names of all companies', 'list all dismissed', or asks which companies/roles have been dismissed. ALWAYS invoke `get_dismissed_jobs` to retrieve the comprehensive list of ALL dismissed companies and total count from the database instead of guessing or listing only 4-5 from recent chat context.\n"
     "- Use `manage_job_status` when the user asks to dismiss, hide, apply, mark as applied, or restore/undismiss jobs by ID number (e.g. 'dismiss job 1 and 4') or company name (e.g. 'dismiss Devmani Traders', 'mark BT Group as applied', 'restore job 2', 'applied to uipath, celonis').\n\n"
     "DOMAIN KNOWLEDGE FOR COMPENSATION & CTC QUERIES IN INDIA:\n"
     "- When asked about compensation, CTC, or salary thresholds (e.g. 'which role offers CTC over 12 lakhs?'):\n"
@@ -809,13 +810,21 @@ async def _fallback_response(
             )
         return format_jobs_html(jobs, f"Your Applied Listings ({len(jobs)})")
 
-    # 0a2. Query dismissed jobs intent (e.g. "dismissed list", "show dismissed roles", "what companies dismissed")
+    # 0a2. Query dismissed jobs intent (e.g. "dismissed list", "show dismissed roles", "name of all", "total dismissed companies")
     is_dismissed_query = (
-        q in ("dismissed list", "dismissed jobs", "dismissed roles", "dismissed companies", "show dismissed", "view dismissed", "hidden jobs", "list dismissed")
+        q in (
+            "dismissed list", "dismissed jobs", "dismissed roles", "dismissed companies",
+            "show dismissed", "view dismissed", "hidden jobs", "list dismissed",
+            "name of all", "names of all", "name of all companies", "names of all companies",
+            "total dismissed companies", "total dismissed", "all dismissed companies",
+            "which companies are dismissed", "dismissed"
+        )
         or any(phrase in q for phrase in [
             "dismissed list", "dismissed jobs", "dismissed roles", "dismissed companies",
             "show dismissed", "view dismissed", "hidden jobs", "hidden roles", "what did i dismiss",
-            "which jobs are dismissed", "which companies are dismissed", "list of dismissed"
+            "which jobs are dismissed", "which companies are dismissed", "list of dismissed",
+            "total dismissed", "dismissed company", "dismissed companies", "names of all dismissed",
+            "name of all dismissed"
         ])
     )
     if is_dismissed_query:
@@ -830,9 +839,7 @@ async def _fallback_response(
                 "Use <code>/dismiss &lt;id or company&gt;</code> or tell me to dismiss roles you're not interested in!"
             )
 
-        comp_summary = ", ".join(companies[:15])
-        if len(companies) > 15:
-            comp_summary += f", and {len(companies) - 15} more"
+        comp_summary = ", ".join(companies)
 
         cards = []
         for j in jobs[:20]:
@@ -845,7 +852,8 @@ async def _fallback_response(
 
         return (
             f"🗑️ <b>Dismissed Roles ({total} total across {len(companies)} companies):</b>\n\n"
-            f"🏢 <b>Companies Dismissed:</b>\n<i>{html.escape(comp_summary)}</i>\n\n"
+            f"🏢 <b>All {len(companies)} Dismissed Companies:</b>\n"
+            f"<i>{html.escape(comp_summary)}</i>\n\n"
             f"<b>Recent Dismissed Roles ({len(cards)} shown):</b>\n"
             + "\n".join(cards)
             + "\n\n💡 <i>To bring any role back to your active tracker, use <code>/restore &lt;id or company&gt;</code>.</i>"

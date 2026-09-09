@@ -575,9 +575,7 @@ async def handle_command(
             return
 
         companies = sorted({j.get("company", "Unknown") for j in all_dismissed})
-        comp_summary = ", ".join(companies[:15])
-        if len(companies) > 15:
-            comp_summary += f", and {len(companies) - 15} more"
+        comp_summary = ", ".join(companies)
 
         cards = []
         for j in all_dismissed[:25]:
@@ -590,7 +588,8 @@ async def handle_command(
 
         reply = (
             f"🗑️ <b>Dismissed Roles ({total} total across {len(companies)} companies):</b>\n\n"
-            f"🏢 <b>Companies Dismissed:</b>\n<i>{html.escape(comp_summary)}</i>\n\n"
+            f"🏢 <b>All {len(companies)} Dismissed Companies:</b>\n"
+            f"<i>{html.escape(comp_summary)}</i>\n\n"
             f"<b>Recent Dismissed Roles ({len(cards)} shown):</b>\n"
             + "\n".join(cards)
             + "\n\n💡 <i>Use <code>/restore &lt;id or company&gt;</code> to undo dismissal.</i>"

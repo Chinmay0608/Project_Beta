@@ -104,6 +104,16 @@ GEMINI_TOOLS = [
                 },
             },
             {
+                "name": "get_dismissed_jobs",
+                "description": "Retrieve job postings that the user has marked as DISMISSED or hidden in the tracker database. ALWAYS use when the user asks for their dismissed jobs, hidden jobs, dismissed list, or asks what roles/companies were dismissed.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "limit": {"type": "INTEGER", "description": "Max results to return (default 30)"},
+                    },
+                },
+            },
+            {
                 "name": "check_company_live",
                 "description": "Trigger an immediate real-time live scan of a specific GCC company's career portal for open positions. ONLY use when the user explicitly requests a live scan or asks for active vacancies at a company. NEVER use for salary, CTC, or role comparisons.",
                 "parameters": {
@@ -174,6 +184,19 @@ OPENAI_TOOLS = [
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "description": "Max results to return (default 50)"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_dismissed_jobs",
+            "description": "Retrieve job postings that the user has marked as DISMISSED or hidden in the tracker database. ALWAYS use when the user asks for their dismissed jobs, hidden jobs, dismissed list, or asks what roles/companies were dismissed.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Max results to return (default 30)"},
                 },
             },
         },
@@ -339,6 +362,38 @@ async def execute_tool(
                 "published_date": str(j.get("published_date") or "Active")[:10],
             })
         return {"status": "success", "count": len(formatted_jobs), "jobs": formatted_jobs}
+
+    elif name == "get_dismissed_jobs":
+        limit = min(max(1, int(args.get("limit", 30))), 50)
+        from gcc_job_radar.db import get_jobs_by_status
+
+        all_dismissed = get_jobs_by_status("DISMISSED", db_path=db_path)
+        total_dismissed = len(all_dismissed)
+        recent_dismissed = all_dismissed[:limit]
+
+        companies_summary = sorted({j.get("company", "Unknown") for j in all_dismissed})
+
+        formatted_jobs = [
+            {
+                "id": j.get("numeric_id") or j.get("id"),
+                "company": j.get("company", "Unknown"),
+                "title": j.get("title", "Role"),
+                "location": j.get("location", ""),
+                "status": "DISMISSED",
+            }
+            for j in recent_dismissed
+        ]
+        return {
+            "status": "success",
+            "total_dismissed_count": total_dismissed,
+            "all_dismissed_companies": companies_summary,
+            "recent_dismissed_jobs": formatted_jobs,
+            "note": (
+                f"There are {total_dismissed} total dismissed roles in the database across companies: {', '.join(companies_summary)}. "
+                f"Always inform the user of the total count ({total_dismissed}) and summarize the companies dismissed, then list the recent ones with their IDs."
+            ),
+        }
+
 
     elif name == "check_company_live":
         company_name = args.get("company_name", "").strip()
@@ -753,6 +808,49 @@ async def _fallback_response(
                 "Use <code>/apply &lt;id or company&gt;</code> or tell me which roles you applied to!"
             )
         return format_jobs_html(jobs, f"Your Applied Listings ({len(jobs)})")
+
+    # 0a2. Query dismissed jobs intent (e.g. "dismissed list", "show dismissed roles", "what companies dismissed")
+    is_dismissed_query = (
+        q in ("dismissed list", "dismissed jobs", "dismissed roles", "dismissed companies", "show dismissed", "view dismissed", "hidden jobs", "list dismissed")
+        or any(phrase in q for phrase in [
+            "dismissed list", "dismissed jobs", "dismissed roles", "dismissed companies",
+            "show dismissed", "view dismissed", "hidden jobs", "hidden roles", "what did i dismiss",
+            "which jobs are dismissed", "which companies are dismissed", "list of dismissed"
+        ])
+    )
+    if is_dismissed_query:
+        res = await execute_tool("get_dismissed_jobs", {}, db_path=db_path)
+        total = res.get("total_dismissed_count", 0)
+        companies = res.get("all_dismissed_companies", [])
+        jobs = res.get("recent_dismissed_jobs", [])
+        if total == 0:
+            return (
+                "ℹ️ <b>No Dismissed Roles Recorded</b>\n\n"
+                "You haven't dismissed any roles or companies yet in the tracker database.\n"
+                "Use <code>/dismiss &lt;id or company&gt;</code> or tell me to dismiss roles you're not interested in!"
+            )
+
+        comp_summary = ", ".join(companies[:15])
+        if len(companies) > 15:
+            comp_summary += f", and {len(companies) - 15} more"
+
+        cards = []
+        for j in jobs[:20]:
+            jid = j.get("id")
+            cname = html.escape(j.get("company", "Unknown"))
+            title = html.escape(j.get("title", "Role"))
+            loc = html.escape(j.get("location", ""))
+            loc_str = f" • {loc}" if loc else ""
+            cards.append(f"• <b>#{jid}. {cname}</b> — {title}{loc_str}")
+
+        return (
+            f"🗑️ <b>Dismissed Roles ({total} total across {len(companies)} companies):</b>\n\n"
+            f"🏢 <b>Companies Dismissed:</b>\n<i>{html.escape(comp_summary)}</i>\n\n"
+            f"<b>Recent Dismissed Roles ({len(cards)} shown):</b>\n"
+            + "\n".join(cards)
+            + "\n\n💡 <i>To bring any role back to your active tracker, use <code>/restore &lt;id or company&gt;</code>.</i>"
+        )
+
 
     # 0b. Job status management intent (dismiss, apply, restore)
     action_match = None

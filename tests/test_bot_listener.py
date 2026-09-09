@@ -678,6 +678,38 @@ async def test_send_telegram_reply_sanitizes_unbalanced_tags() -> None:
         assert sent_payloads[0]["text"] == "<b>Malformed <i>HTML</i></b>"
 
 
+@pytest.mark.asyncio
+async def test_dismissed_command(tmp_path: Path, sample_jobs: list[JobPosting]) -> None:
+    """Verify /dismissed formats all dismissed roles and companies."""
+    db_file = tmp_path / "bot_dismissed.db"
+    init_db(db_file)
+    record_jobs(sample_jobs, db_file)
+    mark_job_status("test-101", status="DISMISSED", db_path=db_file)
+
+    captured_messages = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        data = json.loads(request.content.decode("utf-8"))
+        captured_messages.append(data)
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await handle_command(
+            command_text="/dismissed",
+            chat_id="123456",
+            bot_token="test_token",
+            allowed_chat_id="123456",
+            client=client,
+            db_path=db_file,
+        )
+
+        assert len(captured_messages) == 1
+        text = captured_messages[0]["text"]
+        assert "Dismissed Roles" in text
+        assert "Celonis" in text
+
+
+
 
 
 

@@ -228,6 +228,7 @@ async def handle_command(
             "• <code>/check &lt;name&gt;</code> — Check single company\n"
             "• <code>/latest</code> — Show 5 recent openings\n"
             "• <code>/applied</code> — View your applied roles\n"
+            "• <code>/dismissed</code> — View your dismissed roles & companies\n"
             "• <code>/followups</code> — View pending follow-ups (applied &gt;= 7d)\n"
             "• <code>/stats</code> — View database stats & pipeline\n"
             "• <code>/apply &lt;id/company&gt; [-n note]</code> — Mark job(s) as APPLIED\n"
@@ -559,6 +560,55 @@ async def handle_command(
             + "\n".join(restored_list)
             + "\n\n<i>These postings will now appear in scans and active listings again.</i>"
         )
+        await send_telegram_reply(bot_token, chat_id, reply, client)
+
+    elif cmd in ("/dismissed", "/hidden"):
+        all_dismissed = get_jobs_by_status("DISMISSED", db_path=db_path)
+        total = len(all_dismissed)
+        if not total:
+            await send_telegram_reply(
+                bot_token,
+                chat_id,
+                "ℹ️ <b>No Dismissed Roles</b>\n\nYou have not dismissed any roles yet. Use <code>/dismiss &lt;id or company&gt;</code> to dismiss roles.",
+                client,
+            )
+            return
+
+        companies = sorted({j.get("company", "Unknown") for j in all_dismissed})
+        comp_summary = ", ".join(companies[:15])
+        if len(companies) > 15:
+            comp_summary += f", and {len(companies) - 15} more"
+
+        cards = []
+        for j in all_dismissed[:25]:
+            jid = j.get("numeric_id") or j.get("id")
+            cname = html.escape(j.get("company", "Unknown"))
+            title = html.escape(j.get("title", "Role"))
+            loc = html.escape(j.get("location", ""))
+            loc_str = f" • {loc}" if loc else ""
+            cards.append(f"• <b>#{jid}. {cname}</b> — {title}{loc_str}")
+
+        reply = (
+            f"🗑️ <b>Dismissed Roles ({total} total across {len(companies)} companies):</b>\n\n"
+            f"🏢 <b>Companies Dismissed:</b>\n<i>{html.escape(comp_summary)}</i>\n\n"
+            f"<b>Recent Dismissed Roles ({len(cards)} shown):</b>\n"
+            + "\n".join(cards)
+            + "\n\n💡 <i>Use <code>/restore &lt;id or company&gt;</code> to undo dismissal.</i>"
+        )
+        await send_telegram_reply(bot_token, chat_id, reply, client)
+
+    elif cmd == "/applied":
+        applied_jobs = get_jobs_by_status("APPLIED", db_path=db_path)
+        if not applied_jobs:
+            await send_telegram_reply(
+                bot_token,
+                chat_id,
+                "ℹ️ <b>No Applied Roles Recorded</b>\n\nYou haven't marked any roles as applied yet. Use <code>/apply &lt;id or company&gt;</code>.",
+                client,
+            )
+            return
+
+        reply = format_jobs_html(applied_jobs, f"Your Applied Listings ({len(applied_jobs)})")
         await send_telegram_reply(bot_token, chat_id, reply, client)
 
     else:

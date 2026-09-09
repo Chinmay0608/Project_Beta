@@ -15,7 +15,7 @@ from gcc_job_radar.ai_agent import (
     format_jobs_html,
     markdown_to_telegram_html,
 )
-from gcc_job_radar.db import init_db, query_jobs, record_jobs
+from gcc_job_radar.db import init_db, mark_job_status, query_jobs, record_jobs
 from gcc_job_radar.models import ATSProvider, JobPosting
 
 
@@ -767,5 +767,38 @@ async def test_ask_ai_agent_points_explanation(monkeypatch) -> None:
     assert "Personal Tech-Stack Relevance Score" in reply
     assert "Java" in reply
     assert "Core Stack" in reply
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_get_dismissed_jobs(tmp_path: Path, sample_jobs: list[JobPosting]) -> None:
+    """Verify execute_tool handles get_dismissed_jobs with total count and company summaries."""
+    db_file = tmp_path / "test_dismissed_tool.db"
+    init_db(db_file)
+    record_jobs(sample_jobs, db_file)
+    mark_job_status("job-python-01", status="DISMISSED", db_path=db_file)
+
+    res = await execute_tool("get_dismissed_jobs", {}, db_path=db_file)
+    assert res["status"] == "success"
+    assert res["total_dismissed_count"] == 1
+    assert "Celonis" in res["all_dismissed_companies"]
+    assert len(res["recent_dismissed_jobs"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_dismissed_fallback(tmp_path: Path, sample_jobs: list[JobPosting], monkeypatch) -> None:
+    """Test AI agent fallback returns organized dismissed list."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    db_file = tmp_path / "test_dismissed_fallback.db"
+    init_db(db_file)
+    record_jobs(sample_jobs, db_file)
+    mark_job_status("job-python-01", status="DISMISSED", db_path=db_file)
+
+    reply = await ask_ai_agent("dismissed list", chat_id="test-dismissed-query", db_path=db_file)
+    assert "Dismissed Roles" in reply
+    assert "Celonis" in reply
+
 
 

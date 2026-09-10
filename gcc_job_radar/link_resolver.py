@@ -116,6 +116,46 @@ KNOWN_CAREER_PORTALS: dict[str, str] = {
     "hpe": "https://careers.hpe.com",
     "lenovo": "https://jobs.lenovo.com",
     "sony": "https://www.sony.com/en/SonyInfo/Careers",
+    "thomson reuters": "https://careers.thomsonreuters.com",
+    "huron consulting group": "https://www.huronconsultinggroup.com/careers",
+    "huron consulting": "https://www.huronconsultinggroup.com/careers",
+    "schlumberger": "https://careers.slb.com",
+    "shaadi.com": "https://people.shaadi.com",
+    "shaadi": "https://people.shaadi.com",
+    "enterpret": "https://enterpret.com/careers",
+    "prometheum": "https://www.prometheum.com/careers",
+    "platinumrx": "https://platinumrx.in/careers",
+    "diversio": "https://www.diversio.com/careers",
+    "eventtitans": "https://www.eventtitans.com/careers",
+    "datastraw technologies": "https://datastraw.com/careers",
+    "datastraw": "https://datastraw.com/careers",
+    "particle14": "https://particle14.com/careers",
+    "mhtechin": "https://mhtechnologies.in/careers",
+    "tychr": "https://tychr.com/careers",
+    "autolligent technologies": "https://autolligent.com/careers",
+    "autolligent": "https://autolligent.com/careers",
+    "ihsuk tech": "https://ihsuk.com/careers",
+    "sirma business consulting": "https://sirmabc.com/careers",
+    "sadhana it solutions": "https://sadhanasolutions.com/careers",
+    "partyfly": "https://partyfly.in/careers",
+    "parqis": "https://parqis.com/careers",
+    "metaminds studio": "https://metaminds.studio",
+    "metaminds": "https://metaminds.studio",
+    "bargad.ai": "https://bargad.ai/careers",
+    "big wings llc": "https://bigwingsllc.com/careers",
+    "big wings": "https://bigwingsllc.com/careers",
+    "dhiora groups": "https://dhioragroups.com/careers",
+    "learnilm world": "https://learnilm.com/careers",
+    "nexasec cyber solution": "https://nexasec.in/careers",
+    "nexasec": "https://nexasec.in/careers",
+    "p2intern": "https://p2intern.com/careers",
+    "sourceo": "https://sourceo.in/careers",
+    "storygame": "https://storygame.in/careers",
+    "sutra sync": "https://sutrasync.com/careers",
+    "the print story": "https://theprintstory.com/careers",
+    "whinta": "https://whinta.com/careers",
+    "devmani traders": "https://devmanitraders.com/careers",
+    "domain expansion": "https://domainexpansion.in/careers",
 }
 
 
@@ -335,6 +375,27 @@ def build_direct_careers_search_url(company: str, title: str = "", engine: str =
     return f"https://www.google.com/search?q={encoded_query}"
 
 
+def build_direct_careers_redirect_url(company: str, title: str = "") -> str:
+    """Construct a direct redirect URL that lands straight on the company's careers portal.
+
+    Uses Google Feeling Lucky (btnI=1) which 302-redirects the browser directly to the
+    company's official career portal or job listing, bypassing aggregator Cloudflare 403 blocks.
+    """
+    clean_company = re.sub(r'["\']', "", company or "").strip()
+    clean_title = re.sub(r'["\']', "", title or "").strip()
+    if clean_company and clean_title:
+        query = f"{clean_company} {clean_title} careers"
+    elif clean_company:
+        query = f"{clean_company} careers"
+    elif clean_title:
+        query = f"{clean_title} careers"
+    else:
+        query = "careers jobs apply"
+
+    encoded = urllib.parse.quote_plus(query)
+    return f"https://www.google.com/search?btnI=1&q={encoded}"
+
+
 def is_job_legitimate(company: str, title: str, location: str = "") -> tuple[bool, str]:
     """Validate whether a job posting is genuine and qualifies for entry-level tracking.
 
@@ -383,15 +444,16 @@ def resolve_effective_apply_url(job: Any) -> tuple[str, str, str]:
     """Resolve the best clickable application link, direct search fallback, and descriptive label.
 
     Redirects to the company's verified careers portal (if known), or directly to the job listing
-    on the hosting platform (Glassdoor, Indeed, LinkedIn, Naukri, etc.). Never forces candidates
-    to an unhelpful Google Search results page when a direct job listing URL is present.
+    on the hosting platform (Indeed, LinkedIn, Naukri, etc.). Glassdoor URLs are strictly never
+    returned because they trigger Cloudflare 403 / security challenges for candidates; instead,
+    the company's direct careers portal or redirect is provided.
 
     Returns:
         (effective_apply_url, direct_search_url, link_label)
         - effective_apply_url: Direct ATS URL, company careers portal, or direct platform URL.
         - direct_search_url: Formatted Google direct search link.
         - link_label: User-friendly button/link label (e.g. 'Apply on ATS', 'Official Careers Portal',
-                      'Apply on Glassdoor', 'Apply on LinkedIn').
+                      'Apply on LinkedIn', '{Company} Careers').
     """
     def _extract(field: str) -> str:
         val = getattr(job, field, None)
@@ -424,18 +486,28 @@ def resolve_effective_apply_url(job: Any) -> tuple[str, str, str]:
     if is_direct_ats_url(orig_url_str):
         return orig_url_str, fallback_search, "Apply on ATS"
 
-    # 4. If URL is an aggregator (Glassdoor, LinkedIn, Indeed, Naukri, etc.):
-    if is_glassdoor_url(orig_url_str) or is_aggregator_url(orig_url_str):
+    # 4. If URL is a Glassdoor link:
+    # Glassdoor links NEVER work (Cloudflare 403 / bot challenge blocks candidates).
+    # Strictly return the company's careers page link instead!
+    if is_glassdoor_url(orig_url_str):
         portal = resolve_company_career_portal(company)
         if portal:
             return portal, fallback_search, "Official Careers Portal"
 
-        # If no official company careers portal is registered, redirect directly to the platform!
+        # Direct Feeling Lucky redirect link landing straight on the company's career portal
+        careers_url = build_direct_careers_redirect_url(company, title)
+        label = f"{company} Careers" if company else "Official Careers Portal"
+        return careers_url, fallback_search, label
+
+    # 5. If URL is another aggregator (LinkedIn, Indeed, Naukri, etc.):
+    if is_aggregator_url(orig_url_str):
+        portal = resolve_company_career_portal(company)
+        if portal:
+            return portal, fallback_search, "Official Careers Portal"
+
         if orig_url_str.startswith(("http://", "https://")):
             url_lower = orig_url_str.lower()
-            if is_glassdoor_url(orig_url_str):
-                platform_name = "Glassdoor"
-            elif "linkedin.com" in url_lower:
+            if "linkedin.com" in url_lower:
                 platform_name = "LinkedIn"
             elif "indeed.com" in url_lower:
                 platform_name = "Indeed"
@@ -445,7 +517,9 @@ def resolve_effective_apply_url(job: Any) -> tuple[str, str, str]:
                 platform_name = "Platform"
             return orig_url_str, fallback_search, f"Apply on {platform_name}"
 
-        return fallback_search, fallback_search, f"Search & Apply on {company or 'Company'} Careers"
+        careers_url = build_direct_careers_redirect_url(company, title)
+        label = f"{company} Careers" if company else "Official Careers Portal"
+        return careers_url, fallback_search, label
 
     # 5. Non-aggregator custom URL
     if orig_url_str.startswith(("http://", "https://")):

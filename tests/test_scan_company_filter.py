@@ -241,16 +241,16 @@ def test_ai_agent_configured_companies_exclusion(test_db_with_applied_and_dismis
 
 def test_direct_link_resolution_never_google_search() -> None:
     """Verify resolve_effective_apply_url redirects to platform or careers portal and NEVER to Google search."""
-    # 1. Glassdoor job without known career portal -> redirects to Glassdoor platform
+    # 1. Glassdoor job -> resolves directly to company careers portal (never Glassdoor)
     metaminds_job = {
         "company": "Metaminds Studio",
         "title": "Java Full Stack Developer Intern",
         "apply_url": "https://www.glassdoor.com/job-listing/?jl=1010244212412",
     }
     eff_url, search_url, label = resolve_effective_apply_url(metaminds_job)
-    assert eff_url == "https://www.glassdoor.com/job-listing/?jl=1010244212412"
-    assert label == "Apply on Glassdoor"
-    assert "google.com/search" not in eff_url
+    assert eff_url == "https://metaminds.studio"
+    assert label == "Official Careers Portal"
+    assert "glassdoor.com" not in eff_url
 
     # 2. Indeed job without known career portal -> redirects to Indeed platform
     indeed_job = {

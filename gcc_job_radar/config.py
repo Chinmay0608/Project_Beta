@@ -4923,6 +4923,20 @@ COMPANIES: list[CompanyConfig] = [
     CompanyConfig(name="Capital One GCC", provider=ATSProvider.WORKDAY, board_token="capitalone/Capital_One_Careers", cluster="5"),
     CompanyConfig(name="Citi GCC", provider=ATSProvider.WORKDAY, board_token="citi/Citi_Careers", cluster="5"),
     CompanyConfig(name="Cisco GCC", provider=ATSProvider.WORKDAY, board_token="cisco/Cisco_Careers", cluster="5"),
+
+    # Newly probed and verified companies
+    CompanyConfig(name="Hrtechx", provider=ATSProvider.GREENHOUSE, board_token="hrtechx"),
+    CompanyConfig(name="Insurtechinsights", provider=ATSProvider.GREENHOUSE, board_token="insurtechinsights"),
+
+    # Newly probed and verified companies
+    CompanyConfig(name="Pacificfusion", provider=ATSProvider.GREENHOUSE, board_token="pacificfusion", cluster="3"),
+    CompanyConfig(name="Pilotcompany", provider=ATSProvider.SMARTRECRUITERS, board_token="pilotcompany", cluster="3"),
+    CompanyConfig(name="Viamrobotics", provider=ATSProvider.GREENHOUSE, board_token="viamrobotics", cluster="3"),
+    CompanyConfig(name="Oneapp", provider=ATSProvider.ASHBY, board_token="oneapp", cluster="3"),
+    CompanyConfig(name="Barnes", provider=ATSProvider.ASHBY, board_token="barnes", cluster="3"),
+    CompanyConfig(name="Bedrock Robotics", provider=ATSProvider.ASHBY, board_token="bedrock-robotics", cluster="3"),
+    CompanyConfig(name="Chaosindustries", provider=ATSProvider.GREENHOUSE, board_token="chaosindustries", cluster="3"),
+    CompanyConfig(name="Conductorai", provider=ATSProvider.ASHBY, board_token="conductorai", cluster="3"),
 ]
 
 # Strict entry-level tech title positive pattern

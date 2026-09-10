@@ -382,15 +382,16 @@ def is_job_legitimate(company: str, title: str, location: str = "") -> tuple[boo
 def resolve_effective_apply_url(job: Any) -> tuple[str, str, str]:
     """Resolve the best clickable application link, direct search fallback, and descriptive label.
 
-    Guarantees that Glassdoor URLs (which trigger Cloudflare 403 blocks for users) are NEVER
-    returned as the effective apply URL.
+    Redirects to the company's verified careers portal (if known), or directly to the job listing
+    on the hosting platform (Glassdoor, Indeed, LinkedIn, Naukri, etc.). Never forces candidates
+    to an unhelpful Google Search results page when a direct job listing URL is present.
 
     Returns:
         (effective_apply_url, direct_search_url, link_label)
-        - effective_apply_url: Direct ATS URL, company careers portal, or fallback search URL.
+        - effective_apply_url: Direct ATS URL, company careers portal, or direct platform URL.
         - direct_search_url: Formatted Google direct search link.
         - link_label: User-friendly button/link label (e.g. 'Apply on ATS', 'Official Careers Portal',
-                      'Search & Apply on Company Careers').
+                      'Apply on Glassdoor', 'Apply on LinkedIn').
     """
     company = getattr(job, "company", None) or (job.get("company") if isinstance(job, dict) else "") or ""
     title = getattr(job, "title", None) or (job.get("title") if isinstance(job, dict) else "") or ""
@@ -398,7 +399,7 @@ def resolve_effective_apply_url(job: Any) -> tuple[str, str, str]:
     orig_url_str = str(orig_url).strip()
     stored_search = getattr(job, "direct_search_url", None) or (job.get("direct_search_url") if isinstance(job, dict) else None)
 
-    # 1. Construct high-precision direct search fallback
+    # 1. Construct high-precision direct search fallback (for secondary search)
     fallback_search = stored_search or build_direct_careers_search_url(company, title)
 
     # 2. Try unwrapping nested destination URL
@@ -410,12 +411,28 @@ def resolve_effective_apply_url(job: Any) -> tuple[str, str, str]:
     if is_direct_ats_url(orig_url_str):
         return orig_url_str, fallback_search, "Apply on ATS"
 
-    # 4. If URL is a Glassdoor link (or other blocked aggregator):
+    # 4. If URL is an aggregator (Glassdoor, LinkedIn, Indeed, Naukri, etc.):
     if is_glassdoor_url(orig_url_str) or is_aggregator_url(orig_url_str):
         portal = resolve_company_career_portal(company)
         if portal:
             return portal, fallback_search, "Official Careers Portal"
-        return fallback_search, fallback_search, "Search & Apply on Company Careers"
+
+        # If no official company careers portal is registered, redirect directly to the platform!
+        if orig_url_str.startswith(("http://", "https://")):
+            url_lower = orig_url_str.lower()
+            if is_glassdoor_url(orig_url_str):
+                platform_name = "Glassdoor"
+            elif "linkedin.com" in url_lower:
+                platform_name = "LinkedIn"
+            elif "indeed.com" in url_lower:
+                platform_name = "Indeed"
+            elif "naukri.com" in url_lower:
+                platform_name = "Naukri"
+            else:
+                platform_name = "Platform"
+            return orig_url_str, fallback_search, f"Apply on {platform_name}"
+
+        return fallback_search, fallback_search, f"Search & Apply on {company or 'Company'} Careers"
 
     # 5. Non-aggregator custom URL
     if orig_url_str.startswith(("http://", "https://")):

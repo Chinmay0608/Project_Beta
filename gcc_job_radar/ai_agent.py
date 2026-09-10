@@ -19,11 +19,14 @@ load_dotenv()
 from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.db import (
     find_jobs_by_selector,
+    get_applied_and_dismissed_companies,
+    get_jobs_by_status,
     get_stats,
     mark_job_status,
     query_jobs,
     record_jobs,
 )
+from gcc_job_radar.link_resolver import resolve_effective_apply_url
 from gcc_job_radar.scanner import scan_all_companies
 
 logger = logging.getLogger(__name__)
@@ -48,7 +51,8 @@ SYSTEM_PROMPT = (
     "- ONLY invoke `query_jobs` when the user is explicitly searching for open job listings in the database by title, keyword, city, or company (e.g. 'find python roles in Bangalore').\n"
     "- Use `get_applied_jobs` whenever the user asks for their applied jobs, application history, applied sheet, applied list, or asks 'where are the rest of my applications'. ALWAYS invoke `get_applied_jobs` to retrieve the authentic list of applied jobs from the database instead of guessing from recent chat context.\n"
     "- Use `get_dismissed_jobs` whenever the user asks for dismissed jobs, dismissed companies, hidden jobs, 'name of all', 'names of all companies', 'list all dismissed', or asks which companies/roles have been dismissed. ALWAYS invoke `get_dismissed_jobs` to retrieve the comprehensive list of ALL dismissed companies and total count from the database instead of guessing or listing only 4-5 from recent chat context.\n"
-    "- Use `manage_job_status` when the user asks to dismiss, hide, apply, mark as applied, or restore/undismiss jobs by ID number (e.g. 'dismiss job 1 and 4') or company name (e.g. 'dismiss Devmani Traders', 'mark BT Group as applied', 'restore job 2', 'applied to uipath, celonis').\n\n"
+    "- Use `manage_job_status` when the user asks to dismiss, hide, apply, mark as applied, or restore/undismiss jobs by ID number (e.g. 'dismiss job 1 and 4') or company name (e.g. 'dismiss Devmani Traders', 'mark BT Group as applied', 'restore job 2', 'applied to uipath, celonis').\n"
+    "- FILTERING APPLIED AND DISMISSED COMPANIES: By default, NEVER show or suggest roles or company names that the user has already marked as APPLIED or DISMISSED, unless the user specifically asks for 'all' (e.g. 'show all', 'all companies', 'include dismissed'). `query_jobs` and `get_configured_companies` accept `include_all`: only set `include_all=True` when specifically asked for all companies/jobs.\n\n"
     "DOMAIN KNOWLEDGE FOR COMPENSATION & CTC QUERIES IN INDIA:\n"
     "- When asked about compensation, CTC, or salary thresholds (e.g. 'which role offers CTC over 12 lakhs?'):\n"
     "  • Foreign GCCs & Enterprise Tech Hubs (e.g. BT Group, Google, Microsoft, Morgan Stanley, Snowflake, Databricks, Celonis, Cisco, Walmart): Entry-level Associate / Graduate Engineers typically receive ₹11 – 24+ LPA (readily crossing ₹12 LPA).\n"
@@ -91,6 +95,7 @@ GEMINI_TOOLS = [
                         "company": {"type": "STRING", "description": "Company name (e.g. Celonis, Snowflake, Databricks)"},
                         "status": {"type": "STRING", "description": "Job status filter: 'NEW' (default for open listings), 'APPLIED' (roles user has applied to), 'DISMISSED', or 'ALL'"},
                         "limit": {"type": "INTEGER", "description": "Max results to return (default 5)"},
+                        "include_all": {"type": "BOOLEAN", "description": "Set to true ONLY if user explicitly requested ALL roles including applied and dismissed companies. Defaults to false."},
                     },
                 },
             },
@@ -135,10 +140,12 @@ GEMINI_TOOLS = [
             },
             {
                 "name": "get_configured_companies",
-                "description": "Get the directory of all configured GCC companies and foreign tech hubs tracked by GCC Job Radar.",
+                "description": "Get the directory of configured GCC companies and foreign tech hubs tracked by GCC Job Radar.",
                 "parameters": {
                     "type": "OBJECT",
-                    "properties": {},
+                    "properties": {
+                        "include_all": {"type": "BOOLEAN", "description": "Set to true ONLY if user specifically requested ALL companies including applied or dismissed. Defaults to false."},
+                    },
                 },
             },
             {
@@ -172,6 +179,7 @@ OPENAI_TOOLS = [
                     "company": {"type": "string", "description": "Company name (e.g. Celonis, Snowflake, Databricks)"},
                     "status": {"type": "string", "description": "Job status filter: 'NEW' (default for open listings), 'APPLIED' (roles user has applied to), 'DISMISSED', or 'ALL'"},
                     "limit": {"type": "integer", "description": "Max results to return (default 5)"},
+                    "include_all": {"type": "boolean", "description": "Set to true ONLY if user explicitly requested ALL roles including applied and dismissed companies. Defaults to false."},
                 },
             },
         },
@@ -231,10 +239,12 @@ OPENAI_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_configured_companies",
-            "description": "Get the directory of all configured GCC companies and foreign tech hubs tracked by GCC Job Radar.",
+            "description": "Get the directory of configured GCC companies and foreign tech hubs tracked by GCC Job Radar.",
             "parameters": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "include_all": {"type": "boolean", "description": "Set to true ONLY if user specifically requested ALL companies including applied or dismissed. Defaults to false."},
+                },
             },
         },
     },
@@ -294,14 +304,23 @@ def clear_chat_history(chat_id: str | int) -> None:
 # Tool Implementations
 
 
-def get_configured_companies() -> list[dict[str, str]]:
-    """Return all configured GCC companies with name and ATS provider."""
+def get_configured_companies(
+    include_all: bool = False,
+    db_path: Optional[Path] = None,
+) -> list[dict[str, str]]:
+    """Return configured GCC companies with name and ATS provider, excluding applied/dismissed by default."""
+    excluded: set[str] = set()
+    if not include_all:
+        applied_comps, dismissed_comps = get_applied_and_dismissed_companies(db_path)
+        excluded = applied_comps | dismissed_comps
+
     return [
         {
             "name": c.name,
             "provider": c.provider.value,
         }
         for c in COMPANIES
+        if c.name.lower().strip() not in excluded
     ]
 
 
@@ -314,6 +333,7 @@ async def execute_tool(
         location = args.get("location")
         company = args.get("company")
         status = args.get("status", "NEW")
+        include_all = bool(args.get("include_all", False))
         # Hard cap limit to max 15 to stay strictly within LLM context & TPM budgets
         limit = min(max(1, int(args.get("limit", 5))), 15)
         jobs = query_jobs(
@@ -323,18 +343,19 @@ async def execute_tool(
             status=status,
             limit=limit,
             db_path=db_path,
+            exclude_applied_or_dismissed_companies=(not include_all),
         )
-        compact_jobs = [
-            {
+        compact_jobs = []
+        for j in jobs:
+            eff_url, _, _ = resolve_effective_apply_url(j)
+            compact_jobs.append({
                 "id": j.get("numeric_id") or j.get("id"),
                 "company": j.get("company", "Unknown"),
                 "title": j.get("title", "Role"),
                 "location": j.get("location", ""),
-                "apply_url": j.get("direct_search_url") or j.get("apply_url") or "",
+                "apply_url": eff_url or j.get("apply_url") or "",
                 "published_date": str(j.get("published_date") or "Active")[:10],
-            }
-            for j in jobs
-        ]
+            })
         return {
             "status": "success",
             "count": len(compact_jobs),
@@ -344,8 +365,6 @@ async def execute_tool(
 
     elif name == "get_applied_jobs":
         limit = min(max(1, int(args.get("limit", 20))), 20)
-        from gcc_job_radar.db import get_jobs_by_status
-        from gcc_job_radar.link_resolver import resolve_effective_apply_url
 
         jobs = get_jobs_by_status("APPLIED", limit=limit, db_path=db_path)
         formatted_jobs = []
@@ -366,7 +385,6 @@ async def execute_tool(
 
     elif name == "get_dismissed_jobs":
         limit = min(max(1, int(args.get("limit", 30))), 50)
-        from gcc_job_radar.db import get_jobs_by_status
 
         all_dismissed = get_jobs_by_status("DISMISSED", db_path=db_path)
         total_dismissed = len(all_dismissed)
@@ -434,8 +452,9 @@ async def execute_tool(
         return {"status": "success", "stats": stats}
 
     elif name == "get_configured_companies":
-        comps = get_configured_companies()
-        return {"status": "success", "count": len(comps), "companies": comps}
+        include_all = bool(args.get("include_all", False))
+        comps = get_configured_companies(include_all=include_all, db_path=db_path)
+        return {"status": "success", "count": len(comps), "companies": comps, "include_all": include_all}
 
     elif name == "manage_job_status":
         action = str(args.get("action", "")).lower().strip()
@@ -461,12 +480,13 @@ async def execute_tool(
                 notes=notes if target_status == "APPLIED" else None,
                 db_path=db_path,
             )
+            eff_url, _, _ = resolve_effective_apply_url(j)
             updated_jobs.append({
                 "id": rowid,
                 "company": j.get("company", "Unknown"),
                 "title": j.get("title", "Role"),
                 "status": target_status,
-                "apply_url": str(j.get("direct_search_url") or j.get("apply_url") or ""),
+                "apply_url": eff_url or str(j.get("apply_url") or ""),
             })
 
         return {
@@ -731,18 +751,23 @@ def format_tool_result_summary(name: str, result: dict[str, Any]) -> str:
     if "jobs" in result:
         return format_jobs_html(result["jobs"], f"Results for {name}")
     if "companies" in result:
+        include_all = result.get("include_all", False)
         by_provider: dict[str, list[str]] = {}
         for c in result["companies"]:
             p = c.get("provider", "OTHER").upper()
             by_provider.setdefault(p, []).append(c.get("name", ""))
-        text = f"🏢 <b>Configured GCC Companies ({len(result['companies'])} total):</b>\n\n"
+        title_str = f"All Configured GCC Companies ({len(result['companies'])} total)" if include_all else f"Active Configured GCC Companies ({len(result['companies'])})"
+        text = f"🏢 <b>{title_str}:</b>\n\n"
         for provider, names in sorted(by_provider.items()):
             prominent = [n for n in ["Celonis", "Databricks", "Snowflake", "BT Group", "Google", "Microsoft"] if n in names]
             other = [n for n in sorted(names) if n not in prominent]
             sample_list = prominent + other[: max(1, 8 - len(prominent))]
             sample = ", ".join(sample_list)
             text += f"• <b>{provider}</b> ({len(names)} boards): e.g. <i>{sample}...</i>\n"
-        text += "\n💡 <i>Use <code>/check &lt;name&gt;</code> to scan any company live!</i>"
+        if not include_all:
+            text += "\n💡 <i>Applied or dismissed companies are hidden. Ask for 'all companies' to view the full directory.</i>"
+        else:
+            text += "\n💡 <i>Use <code>/check &lt;name&gt;</code> to scan any company live!</i>"
         return text.strip()
     if "stats" in result:
         stats = result["stats"]
@@ -910,7 +935,8 @@ async def _fallback_response(
         ])
     )
     if is_general_jobs_query:
-        res = await execute_tool("query_jobs", {"status": "NEW", "limit": 10}, db_path=db_path)
+        include_all = any(w in q for w in ["all", "every", "complete", "full"])
+        res = await execute_tool("query_jobs", {"status": "NEW", "limit": 10, "include_all": include_all}, db_path=db_path)
         jobs = res.get("jobs", [])
         if jobs:
             header = "Active Verified GCC Openings"
@@ -951,24 +977,35 @@ async def _fallback_response(
         )
     )
     if is_company_list_query:
+        include_all = any(w in q for w in ["all", "every", "complete", "full"])
+        comps = get_configured_companies(include_all=include_all, db_path=db_path)
         by_provider: dict[str, list[str]] = {}
-        for c in COMPANIES:
-            p_name = c.provider.value.upper()
+        for c in comps:
+            p_name = c["provider"].upper()
             if p_name not in by_provider:
                 by_provider[p_name] = []
-            by_provider[p_name].append(c.name)
+            by_provider[p_name].append(c["name"])
 
-        text = f"🏢 <b>Tracked GCCs & Enterprise Tech Hubs ({len(COMPANIES)} total):</b>\n\n"
+        title_str = f"All Tracked GCCs & Enterprise Tech Hubs ({len(comps)} total)" if include_all else f"Active Tracked GCCs & Enterprise Tech Hubs ({len(comps)})"
+        text = f"🏢 <b>{title_str}:</b>\n\n"
         for provider, names in sorted(by_provider.items()):
             prominent = [n for n in ["Celonis", "Databricks", "Snowflake", "BT Group", "Google", "Microsoft"] if n in names]
             other = [n for n in sorted(names) if n not in prominent]
             sample_list = prominent + other[: max(1, 8 - len(prominent))]
             sample = ", ".join(sample_list)
             text += f"• <b>{provider}</b> ({len(names)} boards): e.g. <i>{sample}...</i>\n"
-        text += (
-            "\n💡 <i>All 4,800+ boards are monitored automatically. "
-            "Use <code>/check &lt;name&gt;</code> (e.g. <code>/check celonis</code>) to scan any company live!</i>"
-        )
+        if not include_all:
+            applied_comps, dismissed_comps = get_applied_and_dismissed_companies(db_path)
+            hidden_cnt = len(applied_comps | dismissed_comps)
+            text += (
+                f"\n💡 <i>{hidden_cnt} company/companies you already applied to or dismissed were hidden. "
+                "Ask for 'all companies' to see the complete list.</i>"
+            )
+        else:
+            text += (
+                "\n💡 <i>All 4,800+ boards are monitored automatically. "
+                "Use <code>/check &lt;name&gt;</code> (e.g. <code>/check celonis</code>) to scan any company live!</i>"
+            )
         return text.strip()
 
     # 3. Database Stats intent

@@ -303,17 +303,17 @@ def test_resolve_effective_apply_url() -> None:
     assert label == "Official Careers Portal"
     assert "BT+Group" in search_url
 
-    # 2. Glassdoor URL for unknown company (falls back to search query)
+    # 2. Glassdoor URL for company without registered careers portal (redirects to platform, not Google search)
     devmani_job = {
         "company": "Devmani Traders",
         "title": "Full Stack Developer Intern",
         "apply_url": "https://www.glassdoor.com/job-listing/?jl=99999",
     }
     eff_url, search_url, label = resolve_effective_apply_url(devmani_job)
-    assert "google.com/search" in eff_url
-    assert "Devmani+Traders" in eff_url
-    assert label == "Search & Apply on Company Careers"
-    assert "glassdoor.com" not in eff_url
+    assert eff_url == "https://www.glassdoor.com/job-listing/?jl=99999"
+    assert label == "Apply on Glassdoor"
+    assert "google.com/search" not in eff_url
+    assert "Devmani+Traders" in search_url
 
     # 3. Direct ATS URL remains untouched
     ats_job = {

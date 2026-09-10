@@ -218,7 +218,7 @@ async def test_execute_tool(tmp_path: Path, sample_jobs: list[JobPosting]) -> No
         assert c_res["count"] == 1
 
     # Test get_configured_companies tool
-    comp_res = await execute_tool("get_configured_companies", {})
+    comp_res = await execute_tool("get_configured_companies", {}, db_path=db_file)
     assert comp_res["status"] == "success"
     assert comp_res["count"] > 0
     assert any(c["name"] == "Celonis" for c in comp_res["companies"])

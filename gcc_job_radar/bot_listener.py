@@ -33,6 +33,7 @@ from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.db import (
     filter_new_jobs,
     find_jobs_by_selector,
+    get_applied_and_dismissed_companies,
     get_job_by_id,
     get_jobs_by_status,
     get_latest_jobs,
@@ -224,7 +225,7 @@ async def handle_command(
     if cmd in ("/start", "/help", "/list"):
         help_text = (
             "📋 <b>GCC Radar Commands:</b>\n"
-            "• <code>/scan</code> — Scan all 150+ GCCs\n"
+            "• <code>/scan</code> — Scan active GCCs (use <code>/scan all</code> to include applied/dismissed)\n"
             "• <code>/check &lt;name&gt;</code> — Check single company\n"
             "• <code>/latest</code> — Show 5 recent openings\n"
             "• <code>/applied</code> — View your applied roles\n"
@@ -401,25 +402,65 @@ async def handle_command(
             )
             return
 
+        show_all = arg.strip().lower() in ("all", "--all", "-a")
+
         _is_scanning = True
         try:
+            scan_header = (
+                f"⚡ Initiating full scan across all <b>{len(COMPANIES)}</b> foreign GCCs & tech centers in India (including applied/dismissed)..."
+                if show_all
+                else f"⚡ Initiating scan across all <b>{len(COMPANIES)}</b> foreign GCCs & tech centers in India..."
+            )
             await send_telegram_reply(
                 bot_token,
                 chat_id,
-                f"⚡ Initiating scan across all <b>{len(COMPANIES)}</b> foreign GCCs & tech centers in India...",
+                scan_header,
                 client,
             )
             jobs = await scan_all_companies(companies=COMPANIES)
             new_jobs, _ = filter_new_jobs(jobs, db_path)
             record_jobs(jobs, db_path)
 
-            if jobs:
-                reply = format_jobs_html(jobs, "Verified Active Entry-Level Openings")
+            if not show_all:
+                applied_comps, dismissed_comps = get_applied_and_dismissed_companies(db_path)
+                excluded_comps = applied_comps | dismissed_comps
+
+                display_jobs = [
+                    j
+                    for j in jobs
+                    if j.company.lower().strip() not in excluded_comps
+                    and getattr(j, "status", "NEW").upper() not in ("APPLIED", "DISMISSED")
+                ]
+                hidden_count = len(jobs) - len(display_jobs)
+
+                if display_jobs:
+                    reply = format_jobs_html(display_jobs, "Verified Active Entry-Level Openings")
+                    if hidden_count > 0:
+                        reply += (
+                            f"\n\n<i>💡 {hidden_count} role(s) from already applied or dismissed companies were hidden. "
+                            f"Use <code>/scan all</code> to view all companies.</i>"
+                        )
+                else:
+                    if hidden_count > 0:
+                        reply = (
+                            "ℹ️ <b>Scan Complete</b>\n\n"
+                            "No new unapplied or undismissed roles currently open across tracked GCCs.\n\n"
+                            f"<i>💡 {hidden_count} active role(s) from companies you already applied to or dismissed were hidden. "
+                            f"Use <code>/scan all</code> to view all companies.</i>"
+                        )
+                    else:
+                        reply = (
+                            "ℹ️ <b>Scan Complete</b>\n\n"
+                            "No entry-level tech roles currently open matching strict criteria across all 150+ tracked boards."
+                        )
             else:
-                reply = (
-                    "ℹ️ <b>Scan Complete</b>\n\n"
-                    "No entry-level tech roles currently open matching strict criteria across all 150+ tracked boards."
-                )
+                if jobs:
+                    reply = format_jobs_html(jobs, "All Verified Active Openings (Including Applied/Dismissed)")
+                else:
+                    reply = (
+                        "ℹ️ <b>Scan Complete</b>\n\n"
+                        "No entry-level tech roles currently open matching strict criteria across all 150+ tracked boards."
+                    )
             await send_telegram_reply(bot_token, chat_id, reply, client)
         finally:
             _is_scanning = False

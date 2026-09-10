@@ -802,6 +802,48 @@ def get_latest_jobs(
         return [dict(row) for row in rows]
 
 
+def get_applied_and_dismissed_companies(
+    db_path: Optional[Path] = None,
+) -> tuple[set[str], set[str]]:
+    """Retrieve lowercase sets of company names that have at least one APPLIED or DISMISSED role.
+
+    Returns:
+        tuple[set[str], set[str]]: (applied_companies, dismissed_companies)
+    """
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+
+    applied_companies: set[str] = set()
+    dismissed_companies: set[str] = set()
+
+    with sqlite3.connect(target_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen_jobs'")
+        table_name = "seen_jobs" if cursor.fetchone() else "jobs"
+
+        cursor.execute(
+            f"""
+            SELECT DISTINCT lower(trim(company))
+            FROM {table_name}
+            WHERE UPPER(COALESCE(status, 'NEW')) = 'APPLIED'
+              AND company IS NOT NULL AND trim(company) != ''
+            """
+        )
+        applied_companies = {row[0] for row in cursor.fetchall() if row[0]}
+
+        cursor.execute(
+            f"""
+            SELECT DISTINCT lower(trim(company))
+            FROM {table_name}
+            WHERE UPPER(COALESCE(status, 'NEW')) = 'DISMISSED'
+              AND company IS NOT NULL AND trim(company) != ''
+            """
+        )
+        dismissed_companies = {row[0] for row in cursor.fetchall() if row[0]}
+
+    return applied_companies, dismissed_companies
+
+
 def query_jobs(
     title_keyword: Optional[str] = None,
     location: Optional[str] = None,
@@ -811,6 +853,7 @@ def query_jobs(
     min_score: Optional[int] = None,
     limit: int = 5,
     db_path: Optional[Path] = None,
+    exclude_applied_or_dismissed_companies: bool = False,
 ) -> list[dict[str, Any]]:
     """Query jobs from database with optional filters, deduplicated by role."""
     init_db(db_path)
@@ -832,6 +875,13 @@ def query_jobs(
     if company and company.strip():
         inner_where += " AND company LIKE ?"
         params.append(f"%{company.strip()}%")
+    elif exclude_applied_or_dismissed_companies and (status is None or status.strip().upper() == "NEW"):
+        applied_comps, dismissed_comps = get_applied_and_dismissed_companies(db_path)
+        excluded = applied_comps | dismissed_comps
+        if excluded:
+            placeholders = ",".join("?" for _ in excluded)
+            inner_where += f" AND lower(trim(company)) NOT IN ({placeholders})"
+            params.extend(list(excluded))
 
     if title_keyword and title_keyword.strip():
         inner_where += " AND title LIKE ?"

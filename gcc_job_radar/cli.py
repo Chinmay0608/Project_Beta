@@ -19,6 +19,7 @@ from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.db import (
     filter_new_jobs,
     filter_unalerted_jobs,
+    get_applied_and_dismissed_companies,
     get_dormant_companies_entries,
     get_dormant_company_names,
     get_job_by_id,
@@ -136,6 +137,12 @@ def scan(
         "-n",
         help="Only display and export postings not seen in previous runs.",
     ),
+    show_all: bool = typer.Option(
+        False,
+        "--all",
+        "-a",
+        help="Include roles from already applied and dismissed companies.",
+    ),
     min_score: int = typer.Option(
         0,
         "--min-score",
@@ -218,6 +225,8 @@ def scan(
         min_score = 0
     if not isinstance(digest, bool):
         digest = False
+    if not isinstance(show_all, bool):
+        show_all = False
     if not isinstance(auto_dormant_threshold, int):
         auto_dormant_threshold = 5
 
@@ -346,16 +355,27 @@ def scan(
     # Persist all current active jobs (attaches rowid, status, notes to all_jobs)
     record_jobs(all_jobs, db_path)
 
-    # Default output displays only unapplied (status = 'NEW') jobs
-    unapplied_jobs = [j for j in all_jobs if getattr(j, "status", "NEW").upper() == "NEW"]
-    unapplied_new_jobs = [j for j in new_jobs if getattr(j, "status", "NEW").upper() == "NEW"]
+    if show_all:
+        display_jobs = all_jobs
+        display_new_jobs = new_jobs
+    else:
+        # Default output displays only unapplied (status = 'NEW') jobs
+        unapplied_jobs = [j for j in all_jobs if getattr(j, "status", "NEW").upper() == "NEW"]
+        unapplied_new_jobs = [j for j in new_jobs if getattr(j, "status", "NEW").upper() == "NEW"]
+        if not company:
+            applied_comps, dismissed_comps = get_applied_and_dismissed_companies(db_path)
+            excluded_comps = applied_comps | dismissed_comps
+            unapplied_jobs = [j for j in unapplied_jobs if j.company.lower().strip() not in excluded_comps]
+            unapplied_new_jobs = [j for j in unapplied_new_jobs if j.company.lower().strip() not in excluded_comps]
+        display_jobs = unapplied_jobs
+        display_new_jobs = unapplied_new_jobs
 
     if new_only:
-        render_results(unapplied_new_jobs, is_new_only=True)
-        jobs_to_export = unapplied_new_jobs
+        render_results(display_new_jobs, is_new_only=True)
+        jobs_to_export = display_new_jobs
     else:
-        render_results(unapplied_jobs, is_new_only=False)
-        jobs_to_export = unapplied_jobs
+        render_results(display_jobs, is_new_only=False)
+        jobs_to_export = display_jobs
 
     if json_path:
         export_json(jobs_to_export, json_path)

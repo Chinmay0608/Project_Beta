@@ -393,11 +393,24 @@ def resolve_effective_apply_url(job: Any) -> tuple[str, str, str]:
         - link_label: User-friendly button/link label (e.g. 'Apply on ATS', 'Official Careers Portal',
                       'Apply on Glassdoor', 'Apply on LinkedIn').
     """
-    company = getattr(job, "company", None) or (job.get("company") if isinstance(job, dict) else "") or ""
-    title = getattr(job, "title", None) or (job.get("title") if isinstance(job, dict) else "") or ""
-    orig_url = getattr(job, "apply_url", None) or (job.get("apply_url") if isinstance(job, dict) else "") or ""
-    orig_url_str = str(orig_url).strip()
-    stored_search = getattr(job, "direct_search_url", None) or (job.get("direct_search_url") if isinstance(job, dict) else None)
+    def _extract(field: str) -> str:
+        val = getattr(job, field, None)
+        if val is not None:
+            return str(val)
+        if hasattr(job, "__getitem__"):
+            try:
+                val = job[field]
+                if val is not None:
+                    return str(val)
+            except (KeyError, IndexError, TypeError):
+                pass
+        return ""
+
+    company = _extract("company")
+    title = _extract("title")
+    orig_url = _extract("apply_url")
+    orig_url_str = orig_url.strip()
+    stored_search = _extract("direct_search_url") or None
 
     # 1. Construct high-precision direct search fallback (for secondary search)
     fallback_search = stored_search or build_direct_careers_search_url(company, title)

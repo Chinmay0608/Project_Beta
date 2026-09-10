@@ -5,9 +5,11 @@ from gcc_job_radar.models import ATSProvider, CompanyConfig
 
 # Curated registry of 150+ enterprise GCCs, global retail tech hubs, Fortune 500 tech centers in India
 COMPANIES: list[CompanyConfig] = [
+    CompanyConfig(name="EXCEL", provider="greenhouse", board_token="excel"),
     CompanyConfig(name="Amazon", provider=ATSProvider.AMAZON, board_token="amazon"),
     CompanyConfig(name="Microsoft", provider=ATSProvider.MICROSOFT, board_token="microsoft"),
     CompanyConfig(name="Apple", provider=ATSProvider.APPLE, board_token="apple"),
+    CompanyConfig(name="Electronic Arts", provider=ATSProvider.EA, board_token="ea"),
     CompanyConfig(name="CAKE", provider="greenhouse", board_token="cakeai"),
 
     CompanyConfig(name="Aviso", provider="smartrecruiters", board_token="avisoai"),
@@ -4968,7 +4970,7 @@ INCLUDE_TITLE_PATTERN: re.Pattern[str] = re.compile(
         (?:new\s+grad(?:uate)?|university\s+grad(?:uate)?|campus\s+hire|early\s+career)\s*(?:[-–—]\s*)?(?:software\s+|systems?\s+|backend\s+|frontend\s+|full[- ]?stack\s+|cloud\s+|data\s+|platform\s+|qa\s+|test\s+|devops\s+)?(?:engineer|developer|programmer|hire)?\b |
 
         # Internships & Apprenticeships
-        (?:software|engineering|developer|tech|swe|data|qa|backend|frontend|systems?|cloud|platform|devops)\s+intern\b |
+        (?:software|engineering|engineer|developer|tech|swe|data|qa|backend|frontend|systems?|cloud|platform|devops|ai|full[\s\-]?stack)\s+intern\b |
         intern[- ]software\s+engineer\b |
         (?:software|engineering|developer|tech|swe|data)\s+apprentice\b |
         apprentice\s+(?:software\s+|systems?\s+)?(?:engineer|developer)\b |

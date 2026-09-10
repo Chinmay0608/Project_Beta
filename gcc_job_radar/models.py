@@ -19,6 +19,7 @@ class ATSProvider(str, Enum):
     AMAZON = "amazon"
     MICROSOFT = "microsoft"
     APPLE = "apple"
+    EA = "ea"
 
 
 class JobStatus(str, Enum):

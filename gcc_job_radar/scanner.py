@@ -13,6 +13,7 @@ from gcc_job_radar.clients.amazon import AmazonClient
 from gcc_job_radar.clients.apple import AppleClient
 from gcc_job_radar.clients.ashby import AshbyClient
 from gcc_job_radar.clients.base import DEFAULT_TIMEOUT
+from gcc_job_radar.clients.ea import EAClient
 from gcc_job_radar.clients.greenhouse import GreenhouseClient
 from gcc_job_radar.clients.lever import LeverClient
 from gcc_job_radar.clients.microsoft import MicrosoftClient
@@ -57,6 +58,7 @@ DEFAULT_DOMAIN_LIMITS: dict[str, int] = {
     "amazon.jobs": 5,
     "microsoft.eightfold.ai": 5,
     "jobs.apple.com": 5,
+    "jobs.ea.com": 5,
 }
 
 
@@ -78,6 +80,8 @@ def get_company_domain(company: CompanyConfig) -> str:
         return "microsoft.eightfold.ai"
     elif company.provider == ATSProvider.APPLE:
         return "jobs.apple.com"
+    elif company.provider == ATSProvider.EA:
+        return "jobs.ea.com"
     elif company.provider == ATSProvider.PHENOM_SUCCESSFACTORS:
 
         token = company.board_token.strip()
@@ -213,6 +217,8 @@ async def fetch_single_company(company: CompanyConfig, client: httpx.AsyncClient
         ats_client = MicrosoftClient(client)
     elif company.provider == ATSProvider.APPLE:
         ats_client = AppleClient(client)
+    elif company.provider == ATSProvider.EA:
+        ats_client = EAClient(client)
     else:
 
         logger.warning("Unsupported ATS provider: %s", company.provider)

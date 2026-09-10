@@ -60,6 +60,8 @@ KNOWN_CAREER_PORTALS: dict[str, str] = {
     "microsoft": "https://careers.microsoft.com",
     "google": "https://www.google.com/about/careers",
     "apple": "https://jobs.apple.com",
+    "electronic arts": "https://jobs.ea.com/en_US/careers",
+    "ea": "https://jobs.ea.com/en_US/careers",
     "meta": "https://www.metacareers.com",
     "cisco": "https://jobs.cisco.com",
     "ibm": "https://www.ibm.com/careers",
@@ -276,6 +278,8 @@ def resolve_company_career_portal(company: str) -> Optional[str]:
                 return "https://apply.careers.microsoft.com"
             elif prov == ATSProvider.APPLE:
                 return "https://jobs.apple.com/en-in/search"
+            elif prov == ATSProvider.EA:
+                return "https://jobs.ea.com/en_US/careers"
 
     except Exception:
         pass

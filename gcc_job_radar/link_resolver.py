@@ -544,7 +544,7 @@ def resolve_job_link(job: dict[str, Any]) -> tuple[str, str]:
         resolved_apply_url = unwrapped
     elif is_glassdoor_url(original_url):
         portal = resolve_company_career_portal(company)
-        resolved_apply_url = portal if portal else original_url
+        resolved_apply_url = portal if portal else build_direct_careers_redirect_url(company, title)
     else:
         resolved_apply_url = original_url
 

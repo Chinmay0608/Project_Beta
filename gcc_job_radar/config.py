@@ -4939,6 +4939,13 @@ COMPANIES: list[CompanyConfig] = [
     CompanyConfig(name="Bedrock Robotics", provider=ATSProvider.ASHBY, board_token="bedrock-robotics", cluster="3"),
     CompanyConfig(name="Chaosindustries", provider=ATSProvider.GREENHOUSE, board_token="chaosindustries", cluster="3"),
     CompanyConfig(name="Conductorai", provider=ATSProvider.ASHBY, board_token="conductorai", cluster="3"),
+    CompanyConfig(name="Enterpret", provider=ATSProvider.GREENHOUSE, board_token="enterpret"),
+    CompanyConfig(name="IndiGo", provider=ATSProvider.ASHBY, board_token="indigo"),
+    CompanyConfig(name="Certa", provider=ATSProvider.ASHBY, board_token="certa"),
+    CompanyConfig(name="Berkadia", provider=ATSProvider.SMARTRECRUITERS, board_token="berkadia"),
+    CompanyConfig(name="Pilgrim", provider=ATSProvider.ASHBY, board_token="pilgrim"),
+    CompanyConfig(name="Narayana Health", provider=ATSProvider.SMARTRECRUITERS, board_token="narayanahealth"),
+    CompanyConfig(name="Swift", provider=ATSProvider.SMARTRECRUITERS, board_token="swiftjobs"),
 ]
 
 # Strict entry-level tech title positive pattern

@@ -7,14 +7,14 @@ import httpx
 import pytest
 
 from gcc_job_radar.models import ATSProvider, CompanyConfig
-from tools.harvest_yc import (
+from tools.discover_ats import (
     FALLBACK_SOURCE,
     PRIMARY_SOURCE,
     fetch_yc_data,
     harvest_companies,
     is_inactive_entry,
     normalize_company_name,
-    parse_args,
+    parse_yc_args as parse_args,
     pipe_to_probe,
     save_targets,
 )

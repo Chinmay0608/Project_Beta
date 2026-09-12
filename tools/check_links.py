@@ -37,8 +37,10 @@ from gcc_job_radar.link_resolver import (
     build_direct_careers_search_url,
     build_direct_search_url,
     is_aggregator_url,
+    is_direct_ats_url,
     is_glassdoor_url,
     resolve_company_career_portal,
+    unwrap_destination_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -492,6 +494,119 @@ def main() -> None:
         limit=args.limit,
         dry_run=args.dry_run,
     )
+
+
+def resolve_database_links(
+    db_path: Optional[Path] = None,
+    limit: Optional[int] = None,
+    dry_run: bool = False,
+    only_missing: bool = False,
+) -> list[dict[str, Any]]:
+    """Inspect and resolve direct ATS links and fallback search queries for jobs in the database."""
+    import sqlite3
+    import unicodedata
+
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+
+    where_clause = "WHERE 1=1"
+    if only_missing:
+        where_clause += " AND (direct_search_url IS NULL OR direct_search_url = '')"
+
+    query = f"""
+        SELECT rowid AS numeric_id, id, company, title, apply_url, status, notes, direct_search_url
+        FROM seen_jobs
+        {where_clause}
+        ORDER BY last_seen_at DESC, first_seen_at DESC
+    """
+    if limit is not None and limit > 0:
+        query += f" LIMIT {int(limit)}"
+
+    with sqlite3.connect(target_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(query)
+        jobs = [dict(r) for r in cursor.fetchall()]
+
+    if not jobs:
+        console.print("[yellow]No jobs found matching criteria to resolve.[/yellow]")
+        return []
+
+    resolved_count = 0
+    updated_url_count = 0
+    updates: list[dict[str, Any]] = []
+
+    for job in jobs:
+        company = job.get("company") or ""
+        title = job.get("title") or ""
+        orig_url = job.get("apply_url") or ""
+        is_glassdoor = is_glassdoor_url(orig_url)
+        is_agg = is_aggregator_url(orig_url)
+
+        unwrapped = unwrap_destination_url(orig_url)
+        portal = resolve_company_career_portal(company) if (is_glassdoor or is_agg or "bt" in company.lower()) else None
+        if unwrapped and is_direct_ats_url(unwrapped):
+            new_apply_url = unwrapped
+        elif portal:
+            new_apply_url = portal
+        elif is_glassdoor or is_agg:
+            new_apply_url = orig_url
+        else:
+            new_apply_url = orig_url
+
+        if is_glassdoor or is_agg or portal:
+            direct_search = build_direct_careers_search_url(company, title)
+        else:
+            direct_search = build_direct_search_url(company, title)
+
+        url_changed = new_apply_url != orig_url
+        search_updated = job.get("direct_search_url") != direct_search
+
+        if url_changed:
+            updated_url_count += 1
+        if search_updated:
+            resolved_count += 1
+
+        updates.append(
+            {
+                "numeric_id": job["numeric_id"],
+                "id": job["id"],
+                "company": company,
+                "title": title,
+                "orig_url": orig_url,
+                "new_apply_url": new_apply_url,
+                "direct_search_url": direct_search,
+                "url_changed": url_changed,
+            }
+        )
+
+    if not dry_run and updates:
+        with sqlite3.connect(target_path) as conn:
+            cursor = conn.cursor()
+            for u in updates:
+                cursor.execute(
+                    """
+                    UPDATE seen_jobs SET
+                        apply_url = ?,
+                        direct_search_url = ?
+                    WHERE id = ?
+                    """,
+                    (u["new_apply_url"], u["direct_search_url"], u["id"]),
+                )
+            conn.commit()
+
+    mode_label = " (DRY RUN)" if dry_run else ""
+    console.print(
+        f"[bold green][+][/bold green] Resolution Complete{mode_label}: "
+        f"[bold white]{len(updates)}[/bold white] jobs processed, "
+        f"[bold cyan]{updated_url_count}[/bold cyan] direct ATS URLs unwrapped, "
+        f"[bold yellow]{resolved_count}[/bold yellow] search fallbacks generated."
+    )
+
+    return updates
+
+
+resolve_links = resolve_database_links
 
 
 if __name__ == "__main__":

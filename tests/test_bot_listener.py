@@ -709,6 +709,40 @@ async def test_dismissed_command(tmp_path: Path, sample_jobs: list[JobPosting]) 
         assert "Celonis" in text
 
 
+@pytest.mark.asyncio
+async def test_email_command(tmp_path: Path, sample_jobs: list[JobPosting]) -> None:
+    """Verify /email command triggers email sync and sends formatted response."""
+    db_file = tmp_path / "bot_email.db"
+    init_db(db_file)
+
+    captured_messages = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        data = json.loads(request.content.decode("utf-8"))
+        captured_messages.append(data)
+        return httpx.Response(200, json={"ok": True})
+
+    with patch("tools.ingest_email.sync_email_alerts", return_value=[sample_jobs[0]]), \
+         patch("tools.ingest_email.get_configured_email_accounts", return_value=[("test@gmail.com", "pass")]):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await handle_command(
+                command_text="/email",
+                chat_id="123456",
+                bot_token="test_token",
+                allowed_chat_id="123456",
+                client=client,
+                db_path=db_file,
+            )
+
+            assert len(captured_messages) >= 2
+            # First message is scanning notification
+            assert "Scanning your 3 configured email accounts" in captured_messages[0]["text"]
+            # Second message is results
+            assert "New Email Job Alerts" in captured_messages[1]["text"]
+            assert "Celonis" in captured_messages[1]["text"]
+
+
+
 
 
 

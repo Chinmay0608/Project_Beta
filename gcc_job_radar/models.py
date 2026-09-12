@@ -20,6 +20,7 @@ class ATSProvider(str, Enum):
     MICROSOFT = "microsoft"
     APPLE = "apple"
     EA = "ea"
+    CUSTOM = "custom"
 
 
 class JobStatus(str, Enum):
@@ -34,11 +35,12 @@ class JobStatus(str, Enum):
 
 
 class CompanyConfig(BaseModel):
-    """Configuration for an ATS job board to scan."""
+    """Configuration for an ATS job board or custom career site to scan."""
 
     name: str
     provider: ATSProvider
-    board_token: str
+    board_token: str = ""
+    career_url: str = ""
     cluster: Optional[str] = "3"
     extra: Optional[dict[str, Any]] = None
 

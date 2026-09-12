@@ -20,6 +20,7 @@ from gcc_job_radar.clients.microsoft import MicrosoftClient
 from gcc_job_radar.clients.phenom_successfactors import PhenomSuccessFactorsClient
 from gcc_job_radar.clients.smartrecruiters import SmartRecruitersClient
 from gcc_job_radar.clients.workday import WorkdayClient
+from gcc_job_radar.clients.custom_career import CustomCareerClient
 from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.models import ATSProvider, CompanyConfig, JobPosting
 
@@ -89,6 +90,12 @@ def get_company_domain(company: CompanyConfig) -> str:
             parsed = urlparse(token)
             return parsed.netloc or "phenom.com"
         return token.split("/")[0] or "phenom.com"
+    elif company.provider == ATSProvider.CUSTOM or str(company.provider).lower() == "custom":
+        target = company.career_url or company.board_token
+        if target.startswith("http://") or target.startswith("https://"):
+            parsed = urlparse(target)
+            return parsed.netloc or "custom_career"
+        return "custom_career"
     return "default"
 
 
@@ -219,6 +226,8 @@ async def fetch_single_company(company: CompanyConfig, client: httpx.AsyncClient
         ats_client = AppleClient(client)
     elif company.provider == ATSProvider.EA:
         ats_client = EAClient(client)
+    elif company.provider == ATSProvider.CUSTOM or str(company.provider).lower() == "custom":
+        ats_client = CustomCareerClient(client)
     else:
 
         logger.warning("Unsupported ATS provider: %s", company.provider)

@@ -801,4 +801,39 @@ async def test_ask_ai_agent_dismissed_fallback(tmp_path: Path, sample_jobs: list
     assert "Celonis" in reply
 
 
+@pytest.mark.asyncio
+async def test_execute_tool_sync_email_jobs(tmp_path: Path, sample_jobs: list[JobPosting]) -> None:
+    """Verify execute_tool handles sync_email_jobs by delegating to sync_email_alerts."""
+    db_file = tmp_path / "test_email_tool.db"
+    init_db(db_file)
+
+    with patch("tools.ingest_email.sync_email_alerts", return_value=[sample_jobs[0]]) as mock_sync, \
+         patch("tools.ingest_email.get_configured_email_accounts", return_value=[("test@gmail.com", "pass")]):
+        res = await execute_tool("sync_email_jobs", {"days": 7, "limit": 10}, db_path=db_file)
+        assert res["status"] == "success"
+        assert res["total_found"] == 1
+        assert res["accounts_checked"] == ["test@gmail.com"]
+        assert len(res["jobs"]) == 1
+        assert res["jobs"][0]["company"] == "Celonis"
+        mock_sync.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_email_query_fallback(tmp_path: Path, sample_jobs: list[JobPosting], monkeypatch) -> None:
+    """Verify AI agent handles user asking to go through email accounts for jobs."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    db_file = tmp_path / "test_email_fallback.db"
+    init_db(db_file)
+
+    with patch("tools.ingest_email.sync_email_alerts", return_value=[sample_jobs[0]]), \
+         patch("tools.ingest_email.get_configured_email_accounts", return_value=[("test@gmail.com", "pass")]):
+        reply = await ask_ai_agent("Go through all 3 email accounts for new relevant jobs", chat_id="test-email-user", db_path=db_file)
+        assert "New Openings from Email Alerts" in reply
+        assert "Celonis" in reply
+
+
+
 

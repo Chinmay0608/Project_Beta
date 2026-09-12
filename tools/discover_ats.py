@@ -50,6 +50,230 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+import subprocess
+
+PRIMARY_SOURCE = "https://raw.githubusercontent.com/akshaybhalotia/yc_companies/main/data/yc_companies.json"
+FALLBACK_SOURCE = "https://raw.githubusercontent.com/alecf/yc-companies/master/data/companies.json"
+CANONICAL_LIVE_SOURCE = "https://yc-oss.github.io/api/companies/all.json"
+DEFAULT_SOURCES = [
+    PRIMARY_SOURCE,
+    FALLBACK_SOURCE,
+    CANONICAL_LIVE_SOURCE,
+]
+DEFAULT_TIMEOUT = 60.0
+DEFAULT_OUTPUT = Path("targets_yc.txt")
+PROBE_SCRIPT_PATH = Path(__file__).resolve().parent / "probe_ats.py"
+
+LEGAL_SUFFIXES = [
+    "inc.",
+    "inc",
+    "llc.",
+    "llc",
+    "ltd.",
+    "ltd",
+    "corp.",
+    "corp",
+    "corporation",
+    "limited",
+    "technologies",
+    "technology",
+    "solutions",
+    "software",
+    "services",
+    "holdings",
+    "group",
+    "co.",
+    "co",
+]
+
+
+def normalize_company_name(name: str) -> str:
+    """Normalize raw company name by stripping legal suffixes and punctuation."""
+    if not name or not isinstance(name, str):
+        return ""
+
+    cleaned = name.strip().strip("\"'").strip()
+    if not cleaned:
+        return ""
+
+    prev = ""
+    while prev != cleaned:
+        prev = cleaned
+        for suffix in LEGAL_SUFFIXES:
+            pattern = re.compile(rf"(?:,|\s)+\b{re.escape(suffix)}\b\.?$", re.IGNORECASE)
+            cleaned = pattern.sub("", cleaned).strip()
+
+    cleaned = re.sub(r"[,\-_.]+$", "", cleaned).strip()
+    cleaned = re.sub(r"^[,\-_.]+", "", cleaned).strip()
+
+    if cleaned.lower() in ("inc", "llc", "corp", "ltd", "co"):
+        return ""
+
+    return cleaned
+
+
+def is_inactive_entry(company: dict) -> bool:
+    """Determine if a YC company entry is inactive, dead, or defunct."""
+    status = str(company.get("status", "")).strip().lower()
+    if status in ("dead", "inactive", "closed", "defunct"):
+        return True
+    if company.get("dead") is True:
+        return True
+    if company.get("active") is False:
+        return True
+    return False
+
+
+def fetch_yc_data(
+    client: Optional[httpx.Client] = None,
+    sources: Optional[list[str]] = None,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> list[dict]:
+    """Fetch YC company datasets with automatic failover."""
+    source_list = sources or DEFAULT_SOURCES
+    own_client = False
+    if client is None:
+        client = httpx.Client(timeout=timeout, follow_redirects=True)
+        own_client = True
+
+    try:
+        for url in source_list:
+            try:
+                resp = client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list):
+                        return data
+                    elif isinstance(data, dict) and "companies" in data:
+                        return data["companies"]
+            except Exception as exc:
+                logger.debug("Failed fetching YC data from %s: %s", url, exc)
+                continue
+    finally:
+        if own_client:
+            client.close()
+
+    return []
+
+
+def harvest_companies(
+    raw_data: list[dict],
+    existing_names: Optional[set[str]] = None,
+    limit: Optional[int] = None,
+) -> list[str]:
+    """Extract normalized, active, deduplicated company names."""
+    existing = {n.strip().lower() for n in (existing_names or set())}
+    seen_in_batch: set[str] = set()
+    harvested: list[str] = []
+
+    for item in raw_data:
+        if is_inactive_entry(item):
+            continue
+
+        raw_name = item.get("name") or ""
+        clean_name = normalize_company_name(raw_name)
+        if not clean_name:
+            continue
+
+        name_lower = clean_name.lower()
+        if name_lower in existing or name_lower in seen_in_batch:
+            continue
+
+        seen_in_batch.add(name_lower)
+        harvested.append(clean_name)
+
+        if limit is not None and len(harvested) >= limit:
+            break
+
+    return harvested
+
+
+def save_targets(targets: list[str], output_path: Path) -> int:
+    """Save target list to output text file with one company per line."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [t.strip() for t in targets if t.strip()]
+    output_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return len(lines)
+
+
+def pipe_to_probe(
+    target_file: Path,
+    append: bool = False,
+    workers: int = 15,
+    timeout: float = 3.0,
+) -> int:
+    """Pipe target company names file into probe_ats.py."""
+    if not target_file.exists():
+        console.print(f"[bold red][X] Target file not found: {target_file}[/bold red]")
+        return 1
+
+    cmd = [
+        sys.executable,
+        str(PROBE_SCRIPT_PATH),
+        "--file",
+        str(target_file),
+        "--workers",
+        str(workers),
+        "--timeout",
+        str(timeout),
+    ]
+    if append:
+        cmd.append("--append")
+
+    console.print(f"[bold green][*] Piping {target_file} to probe_ats.py...[/bold green]")
+    try:
+        res = subprocess.run(cmd, check=False)
+        return res.returncode
+    except KeyboardInterrupt:
+        console.print("\n[yellow][!] ATS probing interrupted by user.[/yellow]")
+        return 130
+
+
+def get_candidate_slugs(name: str) -> list[str]:
+    """Generate candidate slug permutations (base, hyphenated, suffixes)."""
+    base = re.sub(r"[^a-zA-Z0-9]+", "", name.lower())
+    if not base or len(base) < 2:
+        return []
+
+    slugs = [base]
+    hyphen = re.sub(r"[^a-zA-Z0-9]+", "-", name.lower()).strip("-")
+    if hyphen != base and len(hyphen) >= 2:
+        slugs.append(hyphen)
+
+    if len(base) <= 12:
+        for suffix in ("hq", "ai", "io", "tech"):
+            slugs.append(f"{base}{suffix}")
+
+    return list(dict.fromkeys(slugs))
+
+
+def parse_yc_args(args: Optional[list[str]] = None) -> argparse.Namespace:
+    """Parse CLI arguments for YC harvesting."""
+    parser = argparse.ArgumentParser(
+        description="Harvester for Y Combinator directory datasets to discover high-growth tech companies.",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        default=DEFAULT_OUTPUT,
+        help=f"Target file destination path (default: {DEFAULT_OUTPUT})",
+    )
+    parser.add_argument(
+        "--limit",
+        "-l",
+        type=int,
+        default=None,
+        help="Optional maximum number of candidate companies to harvest.",
+    )
+    parser.add_argument(
+        "--pipe-to-probe",
+        action="store_true",
+        help="Seamlessly invoke tools/probe_ats.py with --file <output> --append after harvesting.",
+    )
+    return parser.parse_args(args)
+
+
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",

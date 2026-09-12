@@ -36,7 +36,7 @@
   - Multi-provider resilient LLM chain: **Groq (LPU) ➔ Gemini ➔ OpenAI ➔ Rule-based NLP**.
   - Interactive Telegram bot for live scans, status updates, mobile career advice, and one-click application tracking.
 - **Rich Terminal UI & Flexible Exports**:
-  - Windows launcher script (`.\gcc.bat`) for quick execution without manual venv activation.
+  - Fast execution via `uv run gcc-job-radar` or standard CLI.
   - Animated progress bars, styled tables, and clickable terminal apply URLs.
   - Clean export options to JSON (`--json`) and CSV (`--csv`).
 
@@ -250,13 +250,13 @@ gcc-job-radar/
 ├── .github/
 │   └── workflows/
 │       └── job_radar_cron.yml   # 4-hour scheduled GitHub Actions workflow
-├── gcc.bat                      # Windows launcher for bot, scan, and CLI
 ├── pyproject.toml               # Package metadata, dependencies, entry points
+├── render.yaml                  # Render free Web Service deployment configuration
 ├── README.md                    # Documentation
 ├── gcc_job_radar/
 │   ├── __init__.py              # Package version
 │   ├── cli.py                   # Typer CLI runner with rich UI, flags, and subcommands
-│   ├── config.py                # 4,800+ curated companies and regex pattern definitions
+│   ├── config.py                # Curated company registry and regex pattern definitions
 │   ├── models.py                # Pydantic data models (JobPosting, CompanyConfig)
 │   ├── filters.py               # Strict title, level, and Indian location matching logic
 │   ├── link_resolver.py         # Link resolution, canonical ATS unwrapping, and direct search
@@ -266,7 +266,7 @@ gcc-job-radar/
 │   ├── notifier.py              # Discord & Telegram individual & daily digest dispatchers
 │   ├── scanner.py               # Async concurrent scanning engine (httpx + semaphore)
 │   ├── display.py               # Rich terminal tables, pipeline stats, and stale alerts
-│   ├── ai_agent.py              # Multi-provider LLM conversational AI agent
+│   ├── ai_agent.py              # Multi-provider LLM conversational AI agent with tool use
 │   ├── bot_listener.py          # Interactive Telegram bot daemon
 │   └── clients/
 │       ├── base.py              # Base abstract ATS client
@@ -276,11 +276,15 @@ gcc-job-radar/
 │       ├── ashby.py             # Ashby API client
 │       ├── workday.py           # Workday API client
 │       ├── smartrecruiters.py   # SmartRecruiters API client
-│       └── phenom_successfactors.py # Phenom/SuccessFactors API client
+│       ├── phenom_successfactors.py # Phenom/SuccessFactors API client
+│       └── custom_career.py     # Custom DOM / API career scraper (e.g., Flipkart Turbohire)
 ├── tools/
+│   ├── web_entrypoint.py        # Dual-mode HTTP health server + Telegram bot entrypoint for Render
 │   ├── ingest_email.py          # Multi-account IMAP email job alert ingestion
 │   ├── check_reverts.py         # Recruiter interview & assessment revert detector
-│   └── probe_yc.py              # High-throughput company discovery engine
+│   ├── check_links.py           # Automated link resolution and health checker
+│   ├── discover_ats.py          # ATS sweep & candidate discovery engine
+│   └── mass_scale_registry.py   # Async probing engine scaling registry to 10,000+ active boards
 
 └── tests/
     ├── test_filters.py          # Title/location regex positive & negative test suite

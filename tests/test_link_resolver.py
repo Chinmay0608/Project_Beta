@@ -1,4 +1,4 @@
-"""Unit tests for gcc_job_radar/link_resolver.py and tools/resolve_links.py."""
+"""Unit tests for gcc_job_radar/link_resolver.py and tools/check_links.py."""
 
 from pathlib import Path
 import sqlite3
@@ -29,7 +29,7 @@ from gcc_job_radar.link_resolver import (
     unwrap_destination_url,
 )
 from gcc_job_radar.models import ATSProvider, JobPosting
-from tools.resolve_links import resolve_links
+from tools.check_links import resolve_links
 
 runner = CliRunner()
 

@@ -15,6 +15,7 @@ gcc_job_radar/link_resolver.py
 gcc_job_radar/models.py
 gcc_job_radar/notifier.py
 gcc_job_radar/relevance.py
+gcc_job_radar/resume_tailor_bridge.py
 gcc_job_radar/scanner.py
 gcc_job_radar.egg-info/PKG-INFO
 gcc_job_radar.egg-info/SOURCES.txt
@@ -27,6 +28,7 @@ gcc_job_radar/clients/amazon.py
 gcc_job_radar/clients/apple.py
 gcc_job_radar/clients/ashby.py
 gcc_job_radar/clients/base.py
+gcc_job_radar/clients/ea.py
 gcc_job_radar/clients/greenhouse.py
 gcc_job_radar/clients/lever.py
 gcc_job_radar/clients/microsoft.py
@@ -46,9 +48,11 @@ tests/test_clients.py
 tests/test_config.py
 tests/test_db.py
 tests/test_deep_verifier.py
+tests/test_deployment_config.py
 tests/test_digest.py
 tests/test_discover_ats.py
 tests/test_dormant.py
+tests/test_ea.py
 tests/test_filters.py
 tests/test_harvest_github.py
 tests/test_harvest_mass_ats.py
@@ -60,8 +64,10 @@ tests/test_notifier.py
 tests/test_probe.py
 tests/test_relevance.py
 tests/test_remote_fresher_filter.py
+tests/test_resume_tailor_bridge.py
 tests/test_scan_company_filter.py
 tests/test_scanner.py
 tests/test_stale_tracking.py
 tests/test_unstop_ingestion.py
+tests/test_web_entrypoint.py
 tests/test_workday_client.py

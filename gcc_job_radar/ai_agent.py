@@ -44,14 +44,18 @@ def _safe_print(text: str, file: Any = None) -> None:
 
 SYSTEM_PROMPT = (
     "You are the GCC Job Radar AI Assistant. You help candidates discover and evaluate verified "
-    "entry-level engineering, software, and tech roles at foreign GCCs (Global Capability Centers) and enterprise tech hubs in India.\n\n"
-    "CRITICAL GUIDELINES ON TOOL INVOCATION:\n"
-    "- NEVER invoke tools (`check_company_live` or `query_jobs`) for compensation, CTC, salary inquiries, interview advice, resume tips, or general role comparisons. ATS endpoints do NOT contain Indian CTC/compensation figures. Triggering live scans for salary questions is useless and causes network delays.\n"
-    "- ONLY invoke `check_company_live` when the user explicitly requests to scan, check, or refresh active openings at a specific company (e.g. 'check Databricks live', 'scan Celonis').\n"
-    "- ONLY invoke `query_jobs` when the user is explicitly searching for open job listings in the database by title, keyword, city, or company (e.g. 'find python roles in Bangalore').\n"
+    "entry-level engineering, software, and tech roles at foreign GCCs (Global Capability Centers), enterprise tech hubs, and verified job alerts in India.\n\n"
+    "CRITICAL CAPABILITY — DIRECT EMAIL INBOX ACCESS:\n"
+    "- YOU HAVE FULL DIRECT ACCESS TO THE USER'S CONFIGURED EMAIL ACCOUNTS.\n"
+    "- The user has 3 active email accounts configured in .env with authorized IMAP SSL credentials (chinmay8064@gmail.com, chinmaymaheshwari.it27@gmail.com, chinmaymaheshwari.it27@jecrc.ac.in).\n"
+    "- When the user asks to check, scan, go through, or sync their email accounts / inbox for jobs, job alerts, or emails (e.g. 'Go through all 3 email accounts for new relevant jobs', 'check my emails for jobs', 'scan inbox for job alerts', 'sync emails'), ALWAYS invoke the `sync_email_jobs` tool immediately.\n"
+    "- NEVER say 'I am not able to access your email accounts directly' or 'I don't have access to your email'. You DO have direct access via `sync_email_jobs`.\n\n"
+    "- ONLY invoke tools (`check_company_live`, `query_jobs`, `sync_email_jobs`, `get_applied_jobs`, `get_dismissed_jobs`, `manage_job_status`) when searching for job openings or checking company/email status. NEVER invoke them for compensation, CTC, salary inquiries, interview advice, resume tips, or general role comparisons. ATS endpoints do NOT contain Indian CTC/compensation figures.\n"
+    "- Invoke `query_jobs` when the user is searching for open job listings in the database by title, keyword, city, or company name (e.g. 'BlackRock', 'Flipkart', 'find python roles in Bangalore'). If `query_jobs` returns 0 jobs for a requested company or if the user asks to scan, check, or refresh active openings at a specific company (e.g. 'check Databricks live', 'scan Celonis', 'add/check BlackRock', 'check Flipkart'), invoke `check_company_live` to fetch live openings directly from the company's verified ATS board.\n"
     "- Use `get_applied_jobs` whenever the user asks for their applied jobs, application history, applied sheet, applied list, or asks 'where are the rest of my applications'. ALWAYS invoke `get_applied_jobs` to retrieve the authentic list of applied jobs from the database instead of guessing from recent chat context.\n"
     "- Use `get_dismissed_jobs` whenever the user asks for dismissed jobs, dismissed companies, hidden jobs, 'name of all', 'names of all companies', 'list all dismissed', or asks which companies/roles have been dismissed. ALWAYS invoke `get_dismissed_jobs` to retrieve the comprehensive list of ALL dismissed companies and total count from the database instead of guessing or listing only 4-5 from recent chat context.\n"
     "- Use `manage_job_status` when the user asks to dismiss, hide, apply, mark as applied, or restore/undismiss jobs by ID number (e.g. 'dismiss job 1 and 4') or company name (e.g. 'dismiss Devmani Traders', 'mark BT Group as applied', 'restore job 2', 'applied to uipath, celonis').\n"
+    "- Use `sync_email_jobs` whenever the user asks to scan, check, go through, or ingest job alert emails from their configured email accounts.\n"
     "- FILTERING APPLIED AND DISMISSED COMPANIES: By default, NEVER show or suggest roles or company names that the user has already marked as APPLIED or DISMISSED, unless the user specifically asks for 'all' (e.g. 'show all', 'all companies', 'include dismissed'). `query_jobs` and `get_configured_companies` accept `include_all`: only set `include_all=True` when specifically asked for all companies/jobs.\n\n"
     "DOMAIN KNOWLEDGE FOR COMPENSATION & CTC QUERIES IN INDIA:\n"
     "- When asked about compensation, CTC, or salary thresholds (e.g. 'which role offers CTC over 12 lakhs?'):\n"
@@ -161,6 +165,18 @@ GEMINI_TOOLS = [
                     "required": ["action", "target"],
                 },
             },
+            {
+                "name": "sync_email_jobs",
+                "description": "Scan and ingest job alert emails directly from the user's 3 configured email accounts (e.g. LinkedIn, Naukri, Indeed, Glassdoor alerts via IMAP SSL). Extracts verified entry-level tech openings, saves them to the database, and returns the findings. ALWAYS use when user asks to check, scan, or go through their emails or inboxes for jobs.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "days": {"type": "INTEGER", "description": "Number of days back to search emails (default 7)."},
+                        "limit": {"type": "INTEGER", "description": "Maximum emails to inspect per mailbox (default 15)."},
+                        "unread_only": {"type": "BOOLEAN", "description": "Set to true to check only unread emails, or false to inspect all recent alert emails while deduplicating against database. Defaults to false."},
+                    },
+                },
+            },
         ]
     }
 ]
@@ -261,6 +277,21 @@ OPENAI_TOOLS = [
                     "notes": {"type": "string", "description": "Optional notes when marking as applied (e.g. 'Applied via official ATS')"},
                 },
                 "required": ["action", "target"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sync_email_jobs",
+            "description": "Scan and ingest job alert emails directly from the user's 3 configured email accounts (e.g. LinkedIn, Naukri, Indeed, Glassdoor alerts via IMAP SSL). Extracts verified entry-level tech openings, saves them to the database, and returns the findings. ALWAYS use when user asks to check, scan, or go through their emails or inboxes for jobs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "Number of days back to search emails (default 7)."},
+                    "limit": {"type": "integer", "description": "Maximum emails to inspect per mailbox (default 15)."},
+                    "unread_only": {"type": "boolean", "description": "Set to true to check only unread emails, or false to inspect all recent alert emails while deduplicating against database. Defaults to false."},
+                },
             },
         },
     },
@@ -496,6 +527,45 @@ async def execute_tool(
             "count": len(updated_jobs),
             "jobs": updated_jobs,
             "notes": notes,
+        }
+
+    elif name == "sync_email_jobs":
+        days = int(args.get("days", 7))
+        limit = int(args.get("limit", 15))
+        unread_only = bool(args.get("unread_only", False))
+
+        from tools.ingest_email import sync_email_alerts, get_configured_email_accounts
+        import asyncio
+
+        accounts = get_configured_email_accounts()
+        jobs = await asyncio.to_thread(
+            sync_email_alerts,
+            days=days,
+            limit=limit,
+            unread_only=unread_only,
+            db_path=db_path,
+            notify=False,
+        )
+
+        compact_jobs = []
+        for j in jobs[:20]:
+            eff_url, _, label = resolve_effective_apply_url(j)
+            compact_jobs.append({
+                "id": getattr(j, "numeric_id", None) or getattr(j, "id", None),
+                "company": j.company,
+                "title": j.title,
+                "location": j.location,
+                "apply_url": eff_url or str(j.apply_url),
+                "published_date": str(j.published_date or "Recent")[:10],
+            })
+
+        return {
+            "status": "success",
+            "accounts_checked": [u for u, _ in accounts],
+            "count": len(compact_jobs),
+            "total_found": len(jobs),
+            "jobs": compact_jobs,
+            "note": f"Scanned {len(accounts)} configured email account(s) and found {len(jobs)} relevant opening(s). Present newly found jobs clearly using structured job cards.",
         }
 
     return {"status": "error", "message": f"Unknown tool '{name}'"}
@@ -748,6 +818,18 @@ def format_tool_result_summary(name: str, result: dict[str, Any]) -> str:
             )
         return format_jobs_html(jobs, f"Your Applied Listings ({len(jobs)})")
 
+    if name == "sync_email_jobs":
+        jobs = result.get("jobs", [])
+        accounts = result.get("accounts_checked", [])
+        if not jobs:
+            acc_list = "\n".join(f"• <code>{html.escape(acc)}</code>" for acc in accounts)
+            return (
+                f"ℹ️ <b>Email Alert Ingestion Complete</b>\n\n"
+                f"Scanned {len(accounts)} configured email account(s):\n{acc_list}\n\n"
+                f"No new unrecorded entry-level tech job alerts found in the specified window."
+            )
+        return format_jobs_html(jobs, f"New Openings from Email Alerts ({len(jobs)})")
+
     if "jobs" in result:
         return format_jobs_html(result["jobs"], f"Results for {name}")
     if "companies" in result:
@@ -950,18 +1032,32 @@ async def _fallback_response(
                 "Run <code>/scan</code> to initiate a fresh scan across 4,800+ GCC career portals!"
             )
 
+    # 0d. Email accounts scan intent (e.g. "go through all 3 email accounts", "check my emails", "scan email accounts", "check email for jobs")
+    is_email_query = (
+        any(phrase in q for phrase in [
+            "email", "emails", "inbox", "mail", "mailbox", "mailboxes"
+        ])
+        and any(word in q for word in [
+            "check", "scan", "go through", "pull", "fetch", "read", "sync", "look", "search", "find", "new", "relevant"
+        ])
+    )
+    if is_email_query:
+        res = await execute_tool("sync_email_jobs", {"days": 7, "limit": 15, "unread_only": False}, db_path=db_path)
+        return format_tool_result_summary("sync_email_jobs", res)
+
     # 1. Greetings & capabilities
     if any(q.startswith(g) or q == g for g in ["hi", "hello", "hey", "who are you", "what can you do", "help"]):
         return (
             "👋 <b>Hello! I'm your GCC Job Radar Assistant.</b>\n\n"
-            "I help you track entry-level tech roles in India across 150+ foreign GCCs and Fortune 500 tech hubs.\n\n"
+            "I help you track entry-level tech roles in India across 4,800+ foreign GCCs, enterprise tech hubs, and your configured email job alerts.\n\n"
             "💡 <b>You can ask me:</b>\n"
+            "• <i>\"Go through all 3 email accounts for new relevant jobs\"</i>\n"
             "• <i>\"Any Python or backend roles in Bangalore?\"</i>\n"
             "• <i>\"List all tracked companies\"</i>\n"
             "• <i>\"Show me entry-level jobs at Celonis\"</i>\n"
             "• <i>\"Check Databricks live\"</i>\n"
             "• <i>\"How many jobs are currently tracked?\"</i>\n\n"
-            "Or use slash commands like <code>/scan</code>, <code>/latest</code>, or <code>/stats</code>."
+            "Or use slash commands like <code>/scan</code>, <code>/email</code>, <code>/latest</code>, or <code>/stats</code>."
         )
 
     # 2. Company directory intent

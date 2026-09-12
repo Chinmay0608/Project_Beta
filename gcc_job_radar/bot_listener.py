@@ -226,6 +226,7 @@ async def handle_command(
         help_text = (
             "📋 <b>GCC Radar Commands:</b>\n"
             "• <code>/scan</code> — Scan active GCCs (use <code>/scan all</code> to include applied/dismissed)\n"
+            "• <code>/email</code> — Scan your 3 email accounts for job alerts\n"
             "• <code>/check &lt;name&gt;</code> — Check single company\n"
             "• <code>/latest</code> — Show 5 recent openings\n"
             "• <code>/applied</code> — View your applied roles\n"
@@ -649,6 +650,39 @@ async def handle_command(
             return
 
         reply = format_jobs_html(applied_jobs, f"Your Applied Listings ({len(applied_jobs)})")
+        await send_telegram_reply(bot_token, chat_id, reply, client)
+
+    elif cmd in ("/email", "/emails", "/sync_emails"):
+        await send_telegram_reply(
+            bot_token,
+            chat_id,
+            "📬 <i>Scanning your 3 configured email accounts for job alerts (LinkedIn, Naukri, Indeed, Glassdoor)...</i>",
+            client,
+        )
+        try:
+            from tools.ingest_email import sync_email_alerts, get_configured_email_accounts
+
+            accounts = get_configured_email_accounts()
+            jobs = await asyncio.to_thread(
+                sync_email_alerts,
+                days=7,
+                limit=15,
+                unread_only=False,
+                db_path=db_path,
+                notify=False,
+            )
+            if jobs:
+                reply = format_jobs_html(jobs, f"New Email Job Alerts ({len(jobs)})")
+            else:
+                acc_list = "\n".join(f"• <code>{html.escape(u)}</code>" for u, _ in accounts)
+                reply = (
+                    f"ℹ️ <b>Email Ingestion Complete</b>\n\n"
+                    f"Checked {len(accounts)} email account(s):\n{acc_list}\n\n"
+                    f"No new unrecorded entry-level tech job alerts found in the last 7 days."
+                )
+        except Exception as exc:
+            logger.exception("Error syncing email alerts")
+            reply = f"❌ Error checking email accounts: {html.escape(str(exc))}"
         await send_telegram_reply(bot_token, chat_id, reply, client)
 
     else:

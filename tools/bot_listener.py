@@ -20,6 +20,15 @@ os.chdir(PROJECT_ROOT)
 # Load environment variables (.env) from project root
 load_dotenv(PROJECT_ROOT / ".env")
 
+# Ensure standard streams use utf-8 encoding on headless/Windows loggers
+for _stream_name in ("stdout", "stderr"):
+    _stream = getattr(sys, _stream_name, None)
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 from gcc_job_radar.bot_listener import run_bot_listener
 
 logger = logging.getLogger("bot_listener")

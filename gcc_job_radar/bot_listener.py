@@ -46,9 +46,9 @@ from gcc_job_radar.scanner import scan_all_companies
 from gcc_job_radar.link_resolver import resolve_effective_apply_url
 from gcc_job_radar.models import JobPosting
 from gcc_job_radar.notifier import build_job_inline_keyboard
+from gcc_job_radar.display import console
 
 logger = logging.getLogger(__name__)
-console = Console(highlight=False)
 
 # Debounce & lock flags to prevent duplicate simultaneous or re-delivered /scan executions
 _is_scanning: bool = False

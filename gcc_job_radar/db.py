@@ -7,12 +7,20 @@ import urllib.parse
 
 from gcc_job_radar.models import ATSProvider, JobPosting
 
-DEFAULT_DB_PATH = Path("gcc_jobs.db")
+import os
+
+DEFAULT_DB_PATH = Path(os.getenv("GCC_RADAR_DB_PATH", "gcc_jobs.db"))
 
 
-def get_db_path(custom_path: Optional[Path] = None) -> Path:
-    """Resolve active SQLite database path."""
-    return custom_path if custom_path is not None else DEFAULT_DB_PATH
+def get_db_path(custom_path: Optional[Union[Path, str]] = None) -> Path:
+    """Resolve active SQLite database path and ensure parent directories exist."""
+    if custom_path is not None:
+        target = Path(custom_path)
+    else:
+        target = Path(os.getenv("GCC_RADAR_DB_PATH", DEFAULT_DB_PATH))
+    if target.parent and not target.parent.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 def canonicalize_url(url: str) -> str:

@@ -1,7 +1,11 @@
-"""Configuration, seed company registry, and regex patterns for GCC Job Radar."""
-
+import os
+from pathlib import Path
 import re
 from gcc_job_radar.models import ATSProvider, CompanyConfig
+
+# Configurable database path for persistent mounts (e.g. Render /data/gcc_jobs.db)
+DB_PATH = Path(os.getenv("GCC_RADAR_DB_PATH", "gcc_jobs.db"))
+DEFAULT_DB_PATH = DB_PATH
 
 # Curated registry of 150+ enterprise GCCs, global retail tech hubs, Fortune 500 tech centers in India
 COMPANIES: list[CompanyConfig] = [

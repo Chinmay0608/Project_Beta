@@ -12,8 +12,45 @@ from gcc_job_radar.filters import is_remote_opening
 from gcc_job_radar.link_resolver import resolve_effective_apply_url
 from gcc_job_radar.models import JobPosting
 
-# Safe UTF-8 / Windows terminal console configuration
-console = Console(highlight=False)
+import io
+import sys
+
+def create_safe_console() -> Console:
+    """Initialize a Rich Console that operates safely in headless and non-UTF8 environments.
+
+    Ensures standard streams are configured to UTF-8 with 'replace' error handling,
+    and sets force_terminal=False when running without a physical TTY (Docker/Render/CI).
+    """
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None:
+            if hasattr(stream, "reconfigure"):
+                try:
+                    stream.reconfigure(encoding="utf-8", errors="replace")
+                except Exception:
+                    pass
+            elif hasattr(stream, "buffer"):
+                try:
+                    setattr(sys, stream_name, io.TextIOWrapper(stream.buffer, encoding="utf-8", errors="replace"))
+                except Exception:
+                    pass
+
+    is_tty = False
+    if sys.stdout is not None and hasattr(sys.stdout, "isatty"):
+        try:
+            is_tty = sys.stdout.isatty()
+        except Exception:
+            is_tty = False
+
+    return Console(
+        highlight=False,
+        force_terminal=False if not is_tty else None,
+        color_system="auto" if is_tty else None,
+    )
+
+
+# Safe UTF-8 / headless terminal console configuration
+console = create_safe_console()
 
 
 def render_banner(total_companies: int, provider: Optional[str] = None) -> None:

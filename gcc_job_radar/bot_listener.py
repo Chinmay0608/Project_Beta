@@ -792,12 +792,20 @@ async def handle_callback_query(
 
 
 async def run_bot_listener(
-    bot_token: str,
-    allowed_chat_id: str,
+    bot_token: Optional[str] = None,
+    allowed_chat_id: Optional[str] = None,
     db_path: Optional[Path] = None,
     poll_timeout: int = 20,
 ) -> None:
     """Run long-polling loop to listen for Telegram commands and callback queries."""
+    bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
+    allowed_chat_id = allowed_chat_id or os.getenv("TELEGRAM_CHAT_ID")
+
+    if not bot_token:
+        raise ValueError("Missing TELEGRAM_BOT_TOKEN. Set it in environment or pass bot_token explicitly.")
+    if not allowed_chat_id:
+        raise ValueError("Missing TELEGRAM_CHAT_ID. Set it in environment or pass allowed_chat_id explicitly.")
+
     logger.info("Telegram Bot Active. Authorized Chat ID: %s, Target Boards: %d", allowed_chat_id, len(COMPANIES))
     try:
         console.print(

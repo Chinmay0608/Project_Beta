@@ -1,27 +1,22 @@
-﻿services:
-  - type: worker
-    name: gcc-telegram-bot
+services:
+  - type: web
+    name: gcc-job-radar
     runtime: python
-    region: oregon
-    plan: starter
+    region: singapore
+    plan: free
     buildCommand: "pip install --upgrade pip && pip install -e ."
-    startCommand: "python tools/bot_listener.py"
-    disk:
-      name: radar-data
-      mountPath: /data
-      sizeGB: 1
+    startCommand: "python tools/web_entrypoint.py"
     envVars:
-      - key: GCC_RADAR_DB_PATH
-        value: /data/gcc_jobs.db
-      - key: PRIMARY_LLM_PROVIDER
-        value: groq
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: PRIMARY_LLM_PROVIDER
+        value: groq
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
-      - key: GEMINI_API_KEY
-        sync: false
       - key: GROQ_API_KEY
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+

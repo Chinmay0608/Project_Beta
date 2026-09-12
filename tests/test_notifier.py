@@ -289,7 +289,7 @@ async def test_dispatch_notifications_with_tailoring_pipeline(
     sample_jobs: list[JobPosting], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Verify dispatch_notifications invokes tailoring when GROQ_API_KEY is present and attaches paths."""
-    monkeypatch.setenv("GROQ_API_KEY", "mock_groq_key_123")
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-dummy-token")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "mock_bot_token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "mock_chat_id")
 
@@ -327,7 +327,7 @@ async def test_dispatch_notifications_tailoring_failure_groq_down_still_alerts(
     sample_jobs: list[JobPosting], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Verify that when Groq is down (returns None, None), notifications are still dispatched cleanly."""
-    monkeypatch.setenv("GROQ_API_KEY", "mock_groq_key_123")
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-dummy-token")
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/mocked")
 
     def mock_tailor_fail(job, **kwargs):

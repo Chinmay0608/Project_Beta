@@ -4974,7 +4974,6 @@ COMPANIES: list[CompanyConfig] = [
     CompanyConfig(name="Extropic", provider=ATSProvider.ASHBY, board_token="extropic"),
     CompanyConfig(name="Voyant Photonics", provider=ATSProvider.ASHBY, board_token="voyant-photonics"),
     CompanyConfig(name="Bertram Capital Management", provider=ATSProvider.GREENHOUSE, board_token="bertramcapitalmanagement"),
-    CompanyConfig(name="WorldStrides", provider=ATSProvider.GREENHOUSE, board_token="world4822stri986des"),
     CompanyConfig(name="42dot", provider=ATSProvider.ASHBY, board_token="42dot"),
     CompanyConfig(name="Callan", provider=ATSProvider.LEVER, board_token="callan"),
     CompanyConfig(name="SpawGlass", provider=ATSProvider.LEVER, board_token="spawglass"),

@@ -46,26 +46,33 @@ logger = logging.getLogger("web_entrypoint")
 class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
     """HTTP Request Handler serving health checks for Render keep-alive monitors."""
 
+    def _send_response_payload(self, status: int, data: dict, write_body: bool = True) -> None:
+        payload = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        if write_body:
+            self.wfile.write(payload)
+
     def do_GET(self) -> None:
         clean_path = self.path.split("?")[0].rstrip("/")
         if clean_path in ("", "/health"):
-            payload = json.dumps({"status": "healthy", "service": "gcc-job-radar"}).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            self._send_response_payload(200, {"status": "healthy", "service": "gcc-job-radar"})
         else:
-            payload = json.dumps({"error": "not found"}).encode("utf-8")
-            self.send_response(404)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            self._send_response_payload(404, {"error": "not found"})
+
+    def do_HEAD(self) -> None:
+        clean_path = self.path.split("?")[0].rstrip("/")
+        if clean_path in ("", "/health"):
+            self._send_response_payload(200, {"status": "healthy", "service": "gcc-job-radar"}, write_body=False)
+        else:
+            self._send_response_payload(404, {"error": "not found"}, write_body=False)
 
     def log_message(self, format: str, *args: object) -> None:
         """Suppress default stderr HTTP request logging to keep console logs clean."""
-        logger.debug("%s - - [%s] %s", self.client_address[0], self.log_date_time_string(), format % args)
+        return
 
 
 def start_http_server(host: str = "0.0.0.0", port: int = 10000) -> http.server.HTTPServer:

@@ -74,13 +74,14 @@ def tailor_resume_for_job(
     model: str = DEFAULT_MODEL,
     compile_pdf: bool = True,
     timeout: float = 90.0,
+    force: bool = False,
 ) -> tuple[Optional[str], Optional[str]]:
     """Invoke resume_tailor.py as a subprocess to generate tailored LaTeX and PDF resumes.
 
     Returns:
         (tex_path, pdf_path): Tuple containing relative paths to generated files, or (None, None).
     """
-    if not should_tailor_resume(job):
+    if not force and not should_tailor_resume(job):
         logger.debug("Skipping resume tailoring for non-matching role: %s - %s", job.company, job.title)
         return None, None
 

@@ -737,9 +737,50 @@ async def test_email_command(tmp_path: Path, sample_jobs: list[JobPosting]) -> N
             assert len(captured_messages) >= 2
             # First message is scanning notification
             assert "Scanning your 3 configured email accounts" in captured_messages[0]["text"]
-            # Second message is results
             assert "New Email Job Alerts" in captured_messages[1]["text"]
             assert "Celonis" in captured_messages[1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_tailor_command(tmp_path: Path, sample_jobs: list[JobPosting]) -> None:
+    """Verify /tailor command parses selector and invokes resume tailoring."""
+    db_file = tmp_path / "bot_tailor.db"
+    init_db(db_file)
+    record_jobs([sample_jobs[0]], db_path=db_file)
+
+    captured = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    with patch("gcc_job_radar.bot_listener.tailor_resume_for_job", return_value=("tailored/Celonis.tex", None)):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            # 1. Test without arguments -> usage
+            await handle_command(
+                command_text="/tailor",
+                chat_id="123456",
+                bot_token="test_token",
+                allowed_chat_id="123456",
+                client=client,
+                db_path=db_file,
+            )
+            assert "Usage:" in captured[-1].read().decode("utf-8")
+
+            # 2. Test with matching company -> triggers tailoring
+            await handle_command(
+                command_text="/tailor Celonis",
+                chat_id="123456",
+                bot_token="test_token",
+                allowed_chat_id="123456",
+                client=client,
+                db_path=db_file,
+            )
+            assert len(captured) >= 3
+            body = captured[-1].read().decode("utf-8")
+            assert "Tailored Resume Generated" in body
+            assert "Celonis.tex" in body
+
 
 
 

@@ -55,6 +55,7 @@ SYSTEM_PROMPT = (
     "- Use `get_applied_jobs` whenever the user asks for their applied jobs, application history, applied sheet, applied list, or asks 'where are the rest of my applications'. ALWAYS invoke `get_applied_jobs` to retrieve the authentic list of applied jobs from the database instead of guessing from recent chat context.\n"
     "- Use `get_dismissed_jobs` whenever the user asks for dismissed jobs, dismissed companies, hidden jobs, 'name of all', 'names of all companies', 'list all dismissed', or asks which companies/roles have been dismissed. ALWAYS invoke `get_dismissed_jobs` to retrieve the comprehensive list of ALL dismissed companies and total count from the database instead of guessing or listing only 4-5 from recent chat context.\n"
     "- Use `manage_job_status` when the user asks to dismiss, hide, apply, mark as applied, or restore/undismiss jobs by ID number (e.g. 'dismiss job 1 and 4') or company name (e.g. 'dismiss Devmani Traders', 'mark BT Group as applied', 'restore job 2', 'applied to uipath, celonis').\n"
+    "- Use `tailor_job_resume` when the user asks to tailor, customize, adapt, or generate a resume/CV for a specific job (e.g. 'tailor my resume for Flipkart', 'generate a resume for job 1', 'tailor resume for Amazon SDE-1').\n"
     "- Use `sync_email_jobs` whenever the user asks to scan, check, go through, or ingest job alert emails from their configured email accounts.\n"
     "- FILTERING APPLIED AND DISMISSED COMPANIES: By default, NEVER show or suggest roles or company names that the user has already marked as APPLIED or DISMISSED, unless the user specifically asks for 'all' (e.g. 'show all', 'all companies', 'include dismissed'). `query_jobs` and `get_configured_companies` accept `include_all`: only set `include_all=True` when specifically asked for all companies/jobs.\n\n"
     "DOMAIN KNOWLEDGE FOR COMPENSATION & CTC QUERIES IN INDIA:\n"
@@ -177,6 +178,17 @@ GEMINI_TOOLS = [
                     },
                 },
             },
+            {
+                "name": "tailor_job_resume",
+                "description": "Tailor and compile a customized LaTeX and PDF resume aligned specifically to a job opening using Groq AI. ALWAYS invoke when the user asks to tailor, customize, adapt, or generate a resume/CV for a job ID or company.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "job_id": {"type": "STRING", "description": "Numeric row ID or unique ID of the job posting (e.g. '1', '42')."},
+                        "company": {"type": "STRING", "description": "Company name if job ID is not specified (e.g. 'Flipkart', 'Amazon')."},
+                    },
+                },
+            },
         ]
     }
 ]
@@ -291,6 +303,20 @@ OPENAI_TOOLS = [
                     "days": {"type": "integer", "description": "Number of days back to search emails (default 7)."},
                     "limit": {"type": "integer", "description": "Maximum emails to inspect per mailbox (default 15)."},
                     "unread_only": {"type": "boolean", "description": "Set to true to check only unread emails, or false to inspect all recent alert emails while deduplicating against database. Defaults to false."},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "tailor_job_resume",
+            "description": "Tailor and compile a customized LaTeX and PDF resume aligned specifically to a job opening using Groq AI. ALWAYS invoke when the user asks to tailor, customize, adapt, or generate a resume/CV for a job ID or company.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "string", "description": "Numeric row ID or unique ID of the job posting (e.g. '1', '42')."},
+                    "company": {"type": "string", "description": "Company name if job ID is not specified (e.g. 'Flipkart', 'Amazon')."},
                 },
             },
         },
@@ -568,6 +594,63 @@ async def execute_tool(
             "note": f"Scanned {len(accounts)} configured email account(s) and found {len(jobs)} relevant opening(s). Present newly found jobs clearly using structured job cards.",
         }
 
+    elif name in ("tailor_job_resume", "tailor_resume"):
+        job_id = args.get("job_id")
+        company = args.get("company")
+        selector = str(job_id).strip() if job_id else str(company or "").strip()
+        if not selector:
+            return {"status": "error", "message": "Please specify a job_id or company name to tailor the resume for."}
+
+        jobs = find_jobs_by_selector(selector, db_path=db_path)
+        if not jobs:
+            return {"status": "not_found", "message": f"No jobs found matching '{selector}'."}
+
+        target_job = jobs[0]
+        from gcc_job_radar.resume_tailor_bridge import tailor_resume_for_job
+        from gcc_job_radar.models import JobPosting, ATSProvider
+        import asyncio
+
+        prov_str = str(target_job.get("provider", "custom")).lower()
+        prov_enum = ATSProvider.CUSTOM
+        for p in ATSProvider:
+            if p.value.lower() == prov_str:
+                prov_enum = p
+                break
+
+        job_obj = JobPosting(
+            id=str(target_job.get("id", "")),
+            numeric_id=target_job.get("numeric_id"),
+            company=str(target_job.get("company", "")),
+            title=str(target_job.get("title", "")),
+            location=str(target_job.get("location", "")),
+            apply_url=str(target_job.get("apply_url", "")),
+            provider=prov_enum,
+            published_date=target_job.get("published_date"),
+            description=target_job.get("notes") or "",
+        )
+
+        try:
+            tex_path, pdf_path = await asyncio.to_thread(tailor_resume_for_job, job_obj, force=True)
+        except Exception as exc:
+            logger.error("Error in tailor_job_resume tool: %s", exc)
+            tex_path, pdf_path = None, None
+
+        if not tex_path and not pdf_path:
+            return {
+                "status": "error",
+                "message": f"Could not tailor resume for {job_obj.company}. Ensure GROQ_API_KEY is configured in .env.",
+            }
+
+        return {
+            "status": "success",
+            "company": job_obj.company,
+            "title": job_obj.title,
+            "location": job_obj.location,
+            "tex_path": tex_path,
+            "pdf_path": pdf_path,
+            "message": f"Successfully tailored resume for {job_obj.company} - {job_obj.title}. LaTeX: {tex_path}, PDF: {pdf_path}.",
+        }
+
     return {"status": "error", "message": f"Unknown tool '{name}'"}
 
 
@@ -830,6 +913,23 @@ def format_tool_result_summary(name: str, result: dict[str, Any]) -> str:
             )
         return format_jobs_html(jobs, f"New Openings from Email Alerts ({len(jobs)})")
 
+    if name in ("tailor_job_resume", "tailor_resume"):
+        if result.get("status") == "success":
+            comp = html.escape(str(result.get("company", "Company")))
+            title = html.escape(str(result.get("title", "Role")))
+            tex_path = html.escape(str(result.get("tex_path") or ""))
+            pdf_path = result.get("pdf_path")
+            pdf_str = f"\n📄 <b>PDF:</b> <code>{html.escape(str(pdf_path))}</code>" if pdf_path else ""
+            return (
+                f"✅ <b>Tailored Resume Ready!</b>\n\n"
+                f"• <b>Company:</b> {comp}\n"
+                f"• <b>Role:</b> {title}\n"
+                f"• <b>LaTeX Source:</b> <code>{tex_path}</code>"
+                f"{pdf_str}\n\n"
+                f"<i>Your resume has been tailored and saved to the <code>tailored/</code> workspace directory.</i>"
+            )
+        return f"⚠️ {html.escape(str(result.get('message', 'Could not tailor resume.')))}"
+
     if "jobs" in result:
         return format_jobs_html(result["jobs"], f"Results for {name}")
     if "companies" in result:
@@ -1044,6 +1144,25 @@ async def _fallback_response(
     if is_email_query:
         res = await execute_tool("sync_email_jobs", {"days": 7, "limit": 15, "unread_only": False}, db_path=db_path)
         return format_tool_result_summary("sync_email_jobs", res)
+
+    # 0e. Resume tailoring intent (e.g. "tailor resume for Flipkart", "generate resume for job 5", "tailor my resume for Amazon SDE-1")
+    is_tailor_query = bool(re.search(r"\b(tailor|resume|cv)\b", q, re.IGNORECASE)) and any(
+        w in q for w in ["tailor", "generate", "create", "build", "make", "custom", "align", "for", "download"]
+    )
+    if is_tailor_query:
+        m_id = re.search(r"\b(?:job|id|#)?\s*(\d+)\b", q)
+        target = m_id.group(1) if m_id else ""
+        if not target:
+            clean_q = re.sub(
+                r"\b(tailor|my|resume|cv|for|the|a|an|generate|create|build|job|opening|please|can|you|now|me)\b",
+                " ",
+                q,
+                flags=re.IGNORECASE,
+            )
+            target = clean_q.strip()
+        if target:
+            res = await execute_tool("tailor_job_resume", {"job_id": target, "company": target}, db_path=db_path)
+            return format_tool_result_summary("tailor_job_resume", res)
 
     # 1. Greetings & capabilities
     if any(q.startswith(g) or q == g for g in ["hi", "hello", "hey", "who are you", "what can you do", "help"]):

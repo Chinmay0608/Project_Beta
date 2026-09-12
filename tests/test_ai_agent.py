@@ -835,5 +835,40 @@ async def test_ask_ai_agent_email_query_fallback(tmp_path: Path, sample_jobs: li
         assert "Celonis" in reply
 
 
+@pytest.mark.asyncio
+async def test_execute_tool_tailor_job_resume(tmp_path: Path, sample_jobs: list[JobPosting]) -> None:
+    """Verify execute_tool handles tailor_job_resume by invoking tailor_resume_for_job."""
+    db_file = tmp_path / "test_tailor_tool.db"
+    init_db(db_file)
+    record_jobs([sample_jobs[0]], db_file)
+
+    with patch("gcc_job_radar.resume_tailor_bridge.tailor_resume_for_job", return_value=("tailored/Celonis.tex", "tailored/Celonis.pdf")) as mock_tailor:
+        res = await execute_tool("tailor_job_resume", {"company": "Celonis"}, db_path=db_file)
+        assert res["status"] == "success"
+        assert res["company"] == "Celonis"
+        assert res["tex_path"] == "tailored/Celonis.tex"
+        assert res["pdf_path"] == "tailored/Celonis.pdf"
+        mock_tailor.assert_called_once()
+
+        # Test non-existent company
+        res_nf = await execute_tool("tailor_job_resume", {"company": "NonExistentCo"}, db_path=db_file)
+        assert res_nf["status"] == "not_found"
 
 
+@pytest.mark.asyncio
+async def test_ask_ai_agent_tailor_fallback(tmp_path: Path, sample_jobs: list[JobPosting], monkeypatch) -> None:
+    """Verify AI agent fallback handles resume tailoring requests."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    db_file = tmp_path / "test_tailor_fallback.db"
+    init_db(db_file)
+    record_jobs([sample_jobs[0]], db_file)
+
+    with patch("gcc_job_radar.resume_tailor_bridge.tailor_resume_for_job", return_value=("tailored/Celonis.tex", "tailored/Celonis.pdf")):
+        reply = await ask_ai_agent("tailor my resume for Celonis", chat_id="test-tailor-user", db_path=db_file)
+        assert "Tailored Resume Ready!" in reply
+        assert "Celonis" in reply
+        assert "Celonis.tex" in reply
+        assert "Celonis.pdf" in reply

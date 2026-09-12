@@ -44,8 +44,9 @@ from gcc_job_radar.db import (
 )
 from gcc_job_radar.scanner import scan_all_companies
 from gcc_job_radar.link_resolver import resolve_effective_apply_url
-from gcc_job_radar.models import JobPosting
+from gcc_job_radar.models import JobPosting, ATSProvider
 from gcc_job_radar.notifier import build_job_inline_keyboard
+from gcc_job_radar.resume_tailor_bridge import tailor_resume_for_job
 from gcc_job_radar.display import console
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,61 @@ async def send_telegram_reply(
     return all_ok
 
 
+async def send_telegram_document(
+    bot_token: str,
+    chat_id: str | int,
+    file_path: str | Path,
+    caption: str,
+    client: httpx.AsyncClient,
+) -> bool:
+    """Send a document (e.g. PDF or LaTeX resume) to a Telegram chat."""
+    url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+    path = Path(file_path)
+    if not path.is_file():
+        return False
+
+    safe_caption = sanitize_telegram_html(caption) if caption else ""
+    try:
+        with open(path, "rb") as f:
+            file_content = f.read()
+        mime_type = "application/pdf" if path.suffix.lower() == ".pdf" else "application/x-tex"
+        files = {"document": (path.name, file_content, mime_type)}
+        data = {
+            "chat_id": str(chat_id),
+            "caption": safe_caption or caption,
+            "parse_mode": "HTML",
+        }
+        resp = await client.post(url, data=data, files=files, timeout=30.0)
+        if resp.status_code != 200:
+            logger.warning("Failed to send Telegram document %s: status %s - %s", path.name, resp.status_code, resp.text)
+            return False
+        return True
+    except Exception as exc:
+        logger.warning("Error sending Telegram document %s: %s", path, exc)
+        return False
+
+
+def _dict_to_job_posting(j: dict[str, Any]) -> JobPosting:
+    """Convert a database job record dict into a JobPosting model."""
+    provider_str = str(j.get("provider", "custom")).lower()
+    provider_enum = ATSProvider.CUSTOM
+    for p in ATSProvider:
+        if p.value.lower() == provider_str:
+            provider_enum = p
+            break
+    return JobPosting(
+        id=str(j.get("id", "")),
+        numeric_id=j.get("numeric_id"),
+        company=str(j.get("company", "")),
+        title=str(j.get("title", "")),
+        location=str(j.get("location", "")),
+        apply_url=str(j.get("apply_url", "")),
+        provider=provider_enum,
+        published_date=j.get("published_date"),
+        description=j.get("notes") or "",
+    )
+
+
 def format_jobs_html(jobs: list[JobPosting | dict[str, Any]], title: str) -> str:
     """Format a list of JobPostings into an HTML message for Telegram."""
     if not jobs:
@@ -234,6 +290,7 @@ async def handle_command(
             "• <code>/followups</code> — View pending follow-ups (applied &gt;= 7d)\n"
             "• <code>/stats</code> — View database stats & pipeline\n"
             "• <code>/apply &lt;id/company&gt; [-n note]</code> — Mark job(s) as APPLIED\n"
+            "• <code>/tailor &lt;id/company&gt;</code> — Tailor &amp; compile customized PDF resume\n"
             "• <code>/dismiss &lt;id(s)/company&gt;</code> — Dismiss job(s)\n"
             "• <code>/restore &lt;id(s)/company&gt;</code> — Restore job(s) to NEW\n"
             "• <code>/clear</code> — Clear AI conversation memory\n"
@@ -604,6 +661,88 @@ async def handle_command(
         )
         await send_telegram_reply(bot_token, chat_id, reply, client)
 
+    elif cmd in ("/tailor", "/resume"):
+        if not arg:
+            await send_telegram_reply(
+                bot_token,
+                chat_id,
+                "⚠️ <b>Usage:</b> <code>/tailor &lt;id or company&gt;</code>\n\n"
+                "Examples:\n"
+                "• <code>/tailor 1</code>\n"
+                "• <code>/tailor Flipkart</code>\n"
+                "• <code>/tailor Amazon</code>\n\n"
+                "<i>Use <code>/latest</code> to find job IDs from recent findings.</i>",
+                client,
+            )
+            return
+
+        jobs = find_jobs_by_selector(arg, db_path=db_path)
+        if not jobs:
+            await send_telegram_reply(
+                bot_token,
+                chat_id,
+                f"❌ No jobs found matching '<code>{html.escape(arg)}</code>'.\nUse <code>/latest</code> to check active job IDs.",
+                client,
+            )
+            return
+
+        target_job = jobs[0]
+        comp_name = html.escape(str(target_job.get("company", "Unknown")))
+        role_title = html.escape(str(target_job.get("title", "Role")))
+        jid = target_job.get("numeric_id") or target_job.get("id")
+
+        await send_telegram_chat_action(bot_token, chat_id, client, action="upload_document")
+        await send_telegram_reply(
+            bot_token,
+            chat_id,
+            f"⏳ <b>Tailoring resume for #{jid} {comp_name} — {role_title}...</b>\n"
+            f"<i>Using Groq AI &amp; LaTeX template to customize bullets and skills. Please wait...</i>",
+            client,
+        )
+
+        job_obj = _dict_to_job_posting(target_job)
+        try:
+            tex_path, pdf_path = await asyncio.to_thread(tailor_resume_for_job, job_obj, force=True)
+        except Exception as exc:
+            logger.error("Error during on-demand resume tailoring for %s: %s", comp_name, exc)
+            tex_path, pdf_path = None, None
+
+        if not tex_path and not pdf_path:
+            await send_telegram_reply(
+                bot_token,
+                chat_id,
+                f"⚠️ <b>Tailoring Failed for {comp_name}</b>\n\n"
+                f"Could not generate tailored resume. Please verify that <code>GROQ_API_KEY</code> is configured in <code>.env</code>.",
+                client,
+            )
+            return
+
+        pdf_sent = False
+        if pdf_path and Path(pdf_path).is_file():
+            effective_url, _, _ = resolve_effective_apply_url(target_job)
+            apply_link = f'\n🔗 <a href="{html.escape(str(effective_url))}">Direct Apply Link</a>' if effective_url else ""
+            caption = (
+                f"📄 <b>Tailored Resume — {comp_name}</b>\n"
+                f"💼 {role_title}\n"
+                f"📍 {html.escape(str(target_job.get('location', 'India')))}"
+                f"{apply_link}"
+            )
+            pdf_sent = await send_telegram_document(
+                bot_token, chat_id, pdf_path, caption=caption, client=client
+            )
+
+        if not pdf_sent:
+            pdf_str = f"\n📄 <b>PDF:</b> <code>{html.escape(str(pdf_path))}</code>" if pdf_path else ""
+            reply = (
+                f"✅ <b>Tailored Resume Generated!</b>\n\n"
+                f"• <b>Company:</b> {comp_name}\n"
+                f"• <b>Role:</b> {role_title}\n"
+                f"• <b>LaTeX Source:</b> <code>{html.escape(str(tex_path))}</code>"
+                f"{pdf_str}\n\n"
+                f"<i>Files saved in your <code>tailored/</code> workspace folder.</i>"
+            )
+            await send_telegram_reply(bot_token, chat_id, reply, client)
+
     elif cmd in ("/dismissed", "/hidden"):
         all_dismissed = get_jobs_by_status("DISMISSED", db_path=db_path)
         total = len(all_dismissed)
@@ -820,6 +959,68 @@ async def handle_callback_query(
             except Exception as exc:
                 logger.warning("Failed to answer callback query on applied: %s", exc)
 
+        return True
+
+    # 4. Handle Tailor Resume: "tailor:{job_id}"
+    elif data.startswith("tailor:"):
+        job_id = data.split("tailor:", 1)[1].strip()
+        target_job = get_job_by_id(job_id, db_path=db_path)
+        if not target_job:
+            if cb_id:
+                try:
+                    await client.post(
+                        f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery",
+                        json={"callback_query_id": cb_id, "text": f"Job #{job_id} not found.", "show_alert": True},
+                        timeout=5.0,
+                    )
+                except Exception:
+                    pass
+            return False
+
+        if cb_id:
+            try:
+                await client.post(
+                    f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery",
+                    json={"callback_query_id": cb_id, "text": f"⏳ Tailoring resume for {target_job.get('company', 'Job')}..."},
+                    timeout=5.0,
+                )
+            except Exception:
+                pass
+
+        comp_name = html.escape(str(target_job.get("company", "Unknown")))
+        role_title = html.escape(str(target_job.get("title", "Role")))
+        job_obj = _dict_to_job_posting(target_job)
+
+        try:
+            tex_path, pdf_path = await asyncio.to_thread(tailor_resume_for_job, job_obj, force=True)
+        except Exception as exc:
+            logger.error("Callback query tailor error: %s", exc)
+            tex_path, pdf_path = None, None
+
+        if pdf_path and Path(pdf_path).is_file():
+            effective_url, _, _ = resolve_effective_apply_url(target_job)
+            apply_link = f'\n🔗 <a href="{html.escape(str(effective_url))}">Direct Apply Link</a>' if effective_url else ""
+            caption = (
+                f"📄 <b>Tailored Resume — {comp_name}</b>\n"
+                f"💼 {role_title}\n"
+                f"📍 {html.escape(str(target_job.get('location', 'India')))}"
+                f"{apply_link}"
+            )
+            await send_telegram_document(bot_token, chat_id, pdf_path, caption=caption, client=client)
+        elif tex_path:
+            await send_telegram_reply(
+                bot_token,
+                chat_id,
+                f"✅ <b>Tailored Resume LaTeX Ready for {comp_name}:</b>\n<code>{html.escape(str(tex_path))}</code>",
+                client,
+            )
+        else:
+            await send_telegram_reply(
+                bot_token,
+                chat_id,
+                f"⚠️ Could not tailor resume for {comp_name}. Please verify GROQ_API_KEY in .env.",
+                client,
+            )
         return True
 
     return False

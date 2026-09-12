@@ -25,6 +25,7 @@ jobs:
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       EMAIL_USER: ${{ secrets.EMAIL_USER }}
       EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
       EMAIL_USER_2: ${{ secrets.EMAIL_USER_2 || secrets.EMAIL_USER2 }}
@@ -35,6 +36,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -79,5 +82,14 @@ jobs:
         with:
           name: latest-openings
           path: latest_openings.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload tailored resumes artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tailored-resumes
+          path: tailored/
           if-no-files-found: ignore
           retention-days: 7

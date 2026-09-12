@@ -88,6 +88,7 @@ class LeverClient(BaseATSClient):
                             apply_url=apply_url,
                             published_date=published_date,
                             provider=ATSProvider.LEVER,
+                            description=content or None,
                         )
                     )
                 except ValidationError as e:

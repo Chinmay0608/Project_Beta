@@ -61,6 +61,8 @@ class JobPosting(BaseModel):
     direct_search_url: Optional[str] = None
     description: Optional[str] = None
     relevance_score: Optional[int] = 0
+    tailored_tex_path: Optional[str] = None
+    tailored_pdf_path: Optional[str] = None
 
 
 # Backward compatible alias referenced in legacy tests and scripts

@@ -84,6 +84,7 @@ class GreenhouseClient(BaseATSClient):
                             apply_url=apply_url,
                             published_date=published_date,
                             provider=ATSProvider.GREENHOUSE,
+                            description=content or None,
                         )
                     )
                 except ValidationError as e:

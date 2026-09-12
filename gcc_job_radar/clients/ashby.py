@@ -81,6 +81,7 @@ class AshbyClient(BaseATSClient):
                             apply_url=apply_url,
                             published_date=published_date,
                             provider=ATSProvider.ASHBY,
+                            description=content or None,
                         )
                     )
                 except ValidationError as e:

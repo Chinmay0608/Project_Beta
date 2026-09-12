@@ -9,6 +9,7 @@ from rich.console import Console
 
 from gcc_job_radar.link_resolver import resolve_effective_apply_url
 from gcc_job_radar.models import JobPosting
+from gcc_job_radar.resume_tailor_bridge import tailor_resume_for_job
 
 logger = logging.getLogger(__name__)
 console = Console(highlight=False)
@@ -54,6 +55,15 @@ async def send_discord_notification(
                     "text": "GCC Job Radar • India Tech Tracker"
                 },
             }
+            if getattr(job, "tailored_tex_path", None):
+                res_val = f"`{job.tailored_tex_path}`"
+                if getattr(job, "tailored_pdf_path", None):
+                    res_val += f" (PDF: `{job.tailored_pdf_path}`)"
+                embed["fields"].append({
+                    "name": "📄 Tailored Resume",
+                    "value": res_val,
+                    "inline": False,
+                })
             embeds.append(embed)
 
         payload = {
@@ -129,12 +139,18 @@ def format_job_card_html(job: JobPosting | dict[str, Any]) -> str:
         date = job.get("published_date") or "Active"
 
     effective_url, _, label = resolve_effective_apply_url(job)
-    return (
+    card = (
         f"🚀 <b>{html.escape(company)}</b>\n"
         f"💼 {html.escape(pos_title)}\n"
         f"📍 {html.escape(location)} ({ats}) • 📅 {html.escape(date)}\n"
         f"🔗 <a href=\"{html.escape(str(effective_url))}\">{html.escape(label)}</a>"
     )
+    tex_path = getattr(job, "tailored_tex_path", None) if isinstance(job, JobPosting) else (job.get("tailored_tex_path") if isinstance(job, dict) else None)
+    pdf_path = getattr(job, "tailored_pdf_path", None) if isinstance(job, JobPosting) else (job.get("tailored_pdf_path") if isinstance(job, dict) else None)
+    if tex_path:
+        pdf_note = f" (PDF: <code>{html.escape(str(pdf_path))}</code>)" if pdf_path else ""
+        card += f"\n📄 <b>Tailored Resume:</b> <code>{html.escape(str(tex_path))}</code>{pdf_note}"
+    return card
 
 
 async def send_telegram_job_card(
@@ -200,6 +216,9 @@ async def send_telegram_notification(
             f"📍 {clean_location} ({job.provider.value.upper()})\n"
             f"🔗 <a href=\"{html.escape(effective_url)}\">{html.escape(label)}</a>\n"
         )
+        if getattr(job, "tailored_tex_path", None):
+            pdf_note = f" (PDF: <code>{html.escape(str(job.tailored_pdf_path))}</code>)" if getattr(job, "tailored_pdf_path", None) else ""
+            item += f"📄 <b>Resume:</b> <code>{html.escape(str(job.tailored_tex_path))}</code>{pdf_note}\n"
         items_text.append(item)
 
     # Telegram messages are limited to 4096 characters, chunk if needed
@@ -429,6 +448,22 @@ async def dispatch_notifications(
 
     if not discord_url and not (tg_token and tg_chat):
         return
+
+    # Automated resume tailoring for new postings if GROQ_API_KEY is configured
+    groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_api_key:
+        for job in new_jobs:
+            if getattr(job, "tailored_tex_path", None):
+                continue
+            try:
+                tex_path, pdf_path = tailor_resume_for_job(job)
+                if tex_path:
+                    job.tailored_tex_path = tex_path
+                    job.tailored_pdf_path = pdf_path
+            except Exception as exc:
+                logger.warning("Error during resume tailoring for %s: %s", job.company, exc)
+    else:
+        logger.debug("GROQ_API_KEY not configured; skipping automated resume tailoring.")
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         if discord_url:

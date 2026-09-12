@@ -224,3 +224,175 @@ async def test_dispatch_notifications_no_channels(
     await dispatch_notifications(sample_jobs, db_path=test_db)
 
 
+@pytest.mark.asyncio
+async def test_send_discord_notification_with_tailored_resume(sample_jobs: list[JobPosting]) -> None:
+    """Verify Discord payload includes tailored resume field with .tex and .pdf paths."""
+    sample_jobs[0].tailored_tex_path = "tailored/Databricks_Software_Engineer_1.tex"
+    sample_jobs[0].tailored_pdf_path = "tailored/Databricks_Software_Engineer_1.pdf"
+
+    captured_payloads = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        captured_payloads.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(204)
+
+    webhook_url = "https://discord.com/api/webhooks/12345/test-token"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        ok = await send_discord_notification(webhook_url, sample_jobs[:1], client)
+        assert ok is True
+        assert len(captured_payloads) == 1
+
+        fields = captured_payloads[0]["embeds"][0]["fields"]
+        resume_field = next((f for f in fields if f["name"] == "📄 Tailored Resume"), None)
+        assert resume_field is not None
+        assert "tailored/Databricks_Software_Engineer_1.tex" in resume_field["value"]
+        assert "PDF: `tailored/Databricks_Software_Engineer_1.pdf`" in resume_field["value"]
+
+
+@pytest.mark.asyncio
+async def test_send_telegram_notification_with_tailored_resume(sample_jobs: list[JobPosting]) -> None:
+    """Verify Telegram payload includes tailored resume line in message text."""
+    sample_jobs[0].tailored_tex_path = "tailored/Databricks_Software_Engineer_1.tex"
+    sample_jobs[0].tailored_pdf_path = "tailored/Databricks_Software_Engineer_1.pdf"
+
+    captured_payloads = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        captured_payloads.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        ok = await send_telegram_notification("bot123456:ABC-DEF", "987654321", sample_jobs[:1], client)
+        assert ok is True
+        assert len(captured_payloads) == 1
+
+        text = captured_payloads[0]["text"]
+        assert "📄 <b>Resume:</b> <code>tailored/Databricks_Software_Engineer_1.tex</code>" in text
+        assert "(PDF: <code>tailored/Databricks_Software_Engineer_1.pdf</code>)" in text
+
+
+def test_format_job_card_html_with_tailored_resume(sample_jobs: list[JobPosting]):
+    """Verify format_job_card_html includes tailored resume path in card."""
+    from gcc_job_radar.notifier import format_job_card_html
+    sample_jobs[0].tailored_tex_path = "tailored/Databricks_Software_Engineer_1.tex"
+    sample_jobs[0].tailored_pdf_path = "tailored/Databricks_Software_Engineer_1.pdf"
+
+    card = format_job_card_html(sample_jobs[0])
+    assert "📄 <b>Tailored Resume:</b> <code>tailored/Databricks_Software_Engineer_1.tex</code>" in card
+    assert "(PDF: <code>tailored/Databricks_Software_Engineer_1.pdf</code>)" in card
+
+
+@pytest.mark.asyncio
+async def test_dispatch_notifications_with_tailoring_pipeline(
+    sample_jobs: list[JobPosting], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verify dispatch_notifications invokes tailoring when GROQ_API_KEY is present and attaches paths."""
+    monkeypatch.setenv("GROQ_API_KEY", "mock_groq_key_123")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "mock_bot_token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "mock_chat_id")
+
+    tailored_calls = []
+
+    def mock_tailor(job, **kwargs):
+        tailored_calls.append(job.company)
+        return f"tailored/{job.company}_resume.tex", f"tailored/{job.company}_resume.pdf"
+
+    import gcc_job_radar.notifier as notifier
+    monkeypatch.setattr(notifier, "tailor_resume_for_job", mock_tailor)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True})
+
+    original_async_client = httpx.AsyncClient
+
+    def mock_client_factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", mock_client_factory)
+
+    test_db = tmp_path / "notifier_tailor_test.db"
+    await dispatch_notifications(sample_jobs, db_path=test_db)
+
+    # Both sample jobs should have been tailored
+    assert len(tailored_calls) == 2
+    assert sample_jobs[0].tailored_tex_path == "tailored/Databricks_resume.tex"
+    assert sample_jobs[0].tailored_pdf_path == "tailored/Databricks_resume.pdf"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_notifications_tailoring_failure_groq_down_still_alerts(
+    sample_jobs: list[JobPosting], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verify that when Groq is down (returns None, None), notifications are still dispatched cleanly."""
+    monkeypatch.setenv("GROQ_API_KEY", "mock_groq_key_123")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/mocked")
+
+    def mock_tailor_fail(job, **kwargs):
+        return None, None
+
+    import gcc_job_radar.notifier as notifier
+    monkeypatch.setattr(notifier, "tailor_resume_for_job", mock_tailor_fail)
+
+    sent_payloads = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        sent_payloads.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(204)
+
+    original_async_client = httpx.AsyncClient
+
+    def mock_client_factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", mock_client_factory)
+
+    test_db = tmp_path / "notifier_tailor_fail_test.db"
+    await dispatch_notifications(sample_jobs, db_path=test_db)
+
+    # Alerts must still be dispatched
+    assert len(sent_payloads) == 1
+    # No tailored resume field because tailoring failed
+    fields = sent_payloads[0]["embeds"][0]["fields"]
+    assert not any(f["name"] == "📄 Tailored Resume" for f in fields)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_notifications_without_groq_key_skips_tailoring(
+    sample_jobs: list[JobPosting], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Verify tailoring is completely skipped if GROQ_API_KEY is unset."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "mock_bot_token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "mock_chat_id")
+
+    tailor_called = []
+
+    def mock_tailor(job, **kwargs):
+        tailor_called.append(job)
+        return "tailored/test.tex", None
+
+    import gcc_job_radar.notifier as notifier
+    monkeypatch.setattr(notifier, "tailor_resume_for_job", mock_tailor)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True})
+
+    original_async_client = httpx.AsyncClient
+
+    def mock_client_factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", mock_client_factory)
+
+    test_db = tmp_path / "notifier_no_groq_test.db"
+    await dispatch_notifications(sample_jobs, db_path=test_db)
+
+    assert len(tailor_called) == 0
+
+

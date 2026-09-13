@@ -78,6 +78,27 @@ SYSTEM_PROMPT = (
     "    - Supporting Tech (+5 to +10 pts each): TypeScript, SQL/PostgreSQL, Redis, Git, Linux.\n"
     "    - Title Affinity Bonus (+10 to +20 pts): Backend Developer, Full Stack, Java Developer, SDE / Software Engineer.\n"
     "  • Higher points indicate a higher match with the candidate's target tech stack. Roles with 0 pts are still verified entry-level tech roles, but without explicit keywords matching those specific stack skills in their title or description.\n\n"
+    "DOMAIN KNOWLEDGE FOR COMPANY REGISTRY & SCRAPER ARCHITECTURE:\n"
+    "- TOTAL TRACKED COMPANIES: 5,313 companies in the active registry.\n"
+    "- DEDICATED CUSTOM CAREER PORTAL SCRAPERS (NON-ATS) — EXACTLY 6 COMPANIES:\n"
+    "  • These 6 companies do NOT use standard ATS job boards (like Greenhouse, Ashby, Lever, etc.) and instead have proprietary career portals with dedicated custom API/DOM scrapers:\n"
+    "    1. Flipkart (Custom Turbohire internal portal scraper)\n"
+    "    2. Apple (Official Apple Jobs Search API scraper)\n"
+    "    3. Amazon (Amazon Jobs Search API scraper)\n"
+    "    4. Microsoft (Microsoft Careers Search API scraper)\n"
+    "    5. Electronic Arts / EA (EA Careers internal API scraper)\n"
+    "    6. Majid Al Futtaim (Phenom / SuccessFactors career API scraper)\n"
+    "  • NOTE ON CISCO: Cisco GCC is tracked via Workday ATS (cisco/Cisco_Careers), not a custom portal scraper.\n"
+    "- STANDARD ATS PLATFORMS — 5,307 COMPANIES:\n"
+    "  • Monitored via standardized ATS connectors:\n"
+    "    - Greenhouse: 2,044 companies\n"
+    "    - Ashby: 1,499 companies\n"
+    "    - SmartRecruiters: 999 companies\n"
+    "    - Lever: 704 companies\n"
+    "    - Workday: 61 companies (e.g. Cisco GCC, Walmart)\n"
+    "- WHEN THE USER ASKS HOW MANY COMPANIES WE SCRAPE DIRECTLY FROM CAREER PAGES (OR NOT ON ANY ATS BOARD LIKE FLIPKART, APPLE, ETC.):\n"
+    "  • Answer clearly: Exactly 6 companies have dedicated custom career portal scrapers (Flipkart, Apple, Amazon, Microsoft, EA, Majid Al Futtaim).\n"
+    "  • NEVER answer 5,313 when asked about custom scrapers or non-ATS boards! 5,313 is the total count across ALL sources (5,307 standard ATS + 6 custom).\n\n"
     "CRITICAL FORMATTING GUIDELINES FOR TELEGRAM (JOB LISTINGS):\n"
     "- NEVER use markdown tables (no '| ... |' format). Telegram cannot render tables and they look broken and unreadable on mobile screens.\n"
     "- When presenting jobs, ALWAYS present each job as a clean, structured card with emojis and markdown links:\n"
@@ -120,7 +141,26 @@ SYSTEM_PROMPT = (
     "• **Seniority Mismatch** — Title specifies 'Senior Lead Engineer' (requires 5+ years experience). GCC Job Radar strictly targets entry-level and associate roles (0–2 years).\n\n"
     "**Additional Checks:**\n"
     "• **Tech Stack Alignment** — 0 pts match with candidate profile (demands C#/.NET instead of Java/Spring).\n"
-    "• **Actionable Alternative** — Check for Associate or Graduate openings at the same company using `/check <company>`."
+    "• **Actionable Alternative** — Check for Associate or Graduate openings at the same company using `/check <company>`.\n\n"
+    "User: how many companies are currently present that we do scrap of careers page (not on any ATS board like flipkart, apple, cisco)?\n"
+    "Assistant:\n"
+    "### Career Page Scraper Architecture\n\n"
+    "**Custom Career Portal Scrapers (6 Companies):**\n"
+    "These companies do not use standard ATS platforms and are scraped via dedicated proprietary API/DOM scrapers:\n"
+    "• **Flipkart** — Custom Turbohire API/DOM portal scraper\n"
+    "• **Apple** — Official Apple Jobs Search API scraper\n"
+    "• **Amazon** — Amazon.jobs Search API scraper\n"
+    "• **Microsoft** — Microsoft Careers Search API scraper\n"
+    "• **Electronic Arts (EA)** — EA Careers internal API scraper\n"
+    "• **Majid Al Futtaim** — Phenom / SuccessFactors career API scraper\n"
+    "*(Note: Cisco GCC is integrated via Workday ATS, not a custom portal scraper).*\n\n"
+    "**Standard ATS Platform Integrations (5,307 Companies):**\n"
+    "• **Greenhouse** — 2,044 companies\n"
+    "• **Ashby** — 1,499 companies\n"
+    "• **SmartRecruiters** — 999 companies\n"
+    "• **Lever** — 704 companies\n"
+    "• **Workday** — 61 companies\n\n"
+    "**Total Tracked Companies:** 5,313"
 )
 
 
@@ -599,7 +639,28 @@ async def execute_tool(
     elif name == "get_configured_companies":
         include_all = bool(args.get("include_all", False))
         comps = get_configured_companies(include_all=include_all, db_path=db_path)
-        return {"status": "success", "count": len(comps), "companies": comps, "include_all": include_all}
+        custom_providers = {"custom", "apple", "amazon", "microsoft", "ea", "phenom_successfactors"}
+        custom_scrapers = [c for c in comps if c.get("provider", "").lower() in custom_providers]
+        ats_counts: dict[str, int] = {}
+        for c in comps:
+            p = c.get("provider", "").lower()
+            ats_counts[p] = ats_counts.get(p, 0) + 1
+
+        return {
+            "status": "success",
+            "count": len(comps),
+            "companies": comps,
+            "total_count": len(comps),
+            "custom_career_scrapers_count": len(custom_scrapers),
+            "custom_career_scrapers": [c["name"] for c in custom_scrapers],
+            "ats_provider_breakdown": ats_counts,
+            "include_all": include_all,
+            "note": (
+                f"Total tracked companies: {len(comps)}. "
+                f"Custom career portal scrapers (non-ATS): {len(custom_scrapers)} ({', '.join(c['name'] for c in custom_scrapers)}). "
+                f"Standard ATS boards: {len(comps) - len(custom_scrapers)} across Greenhouse, Ashby, SmartRecruiters, Lever, Workday."
+            ),
+        }
 
     elif name == "manage_job_status":
         action = str(args.get("action", "")).lower().strip()
@@ -1054,6 +1115,30 @@ def format_tool_result_summary(name: str, result: dict[str, Any]) -> str:
     if "jobs" in result:
         return format_jobs_html(result["jobs"], f"Results for {name}")
     if "companies" in result:
+        total = result.get("total_count", len(result.get("companies", [])))
+        custom = result.get("custom_career_scrapers", [])
+        ats_counts = result.get("ats_provider_breakdown", {})
+        if custom:
+            lines = [
+                f"🏢 <b>Tracked Company Registry ({total:,} Total)</b>\n",
+                f"🛠️ <b>Custom Career Portal Scrapers ({len(custom)} Companies):</b>",
+                "<i>Dedicated custom API/DOM scrapers for non-ATS career portals:</i>",
+            ]
+            for c in custom:
+                lines.append(f"• <b>{html.escape(c)}</b>")
+            lines.append("\n📡 <b>Standard ATS Platform Integrations:</b>")
+            ats_labels = {
+                "greenhouse": "Greenhouse",
+                "ashby": "Ashby",
+                "smartrecruiters": "SmartRecruiters",
+                "lever": "Lever",
+                "workday": "Workday",
+            }
+            for prov_key, label in ats_labels.items():
+                if prov_key in ats_counts:
+                    lines.append(f"• <b>{label}</b> — {ats_counts[prov_key]:,} companies")
+            return "\n".join(lines).strip()
+
         include_all = result.get("include_all", False)
         by_provider: dict[str, list[str]] = {}
         for c in result["companies"]:
@@ -1453,6 +1538,62 @@ async def _fallback_response(
             "• <i>\"How many jobs are currently tracked?\"</i>\n\n"
             "Or use slash commands like <code>/scan</code>, <code>/email</code>, <code>/latest</code>, or <code>/stats</code>."
         )
+    # 1b. Custom career scrapers / Non-ATS portal breakdown intent
+    is_custom_scraper_query = (
+        any(phrase in q for phrase in [
+            "custom scraper", "custom scrapers", "not present on any ats", "not on any ats",
+            "not on ats", "non ats", "non-ats", "without ats", "scrap of careers page",
+            "scrape of careers page", "scrap of career page", "scrape of career page",
+            "scrap career page", "scrape career page", "custom career", "career page scraper",
+            "career page scrapers", "scrap of careers", "scrape of careers",
+            "not present on ats", "not present in ats", "not in ats",
+        ])
+        or (
+            any(name in q for name in ["flipkart", "apple", "cisco", "amazon", "microsoft", "ea"])
+            and any(phrase in q for phrase in ["ats", "board", "scrap", "scrape", "how many", "present", "tracked"])
+        )
+    )
+    if is_custom_scraper_query:
+        if as_markdown:
+            return (
+                "### Career Page Scraper Architecture\n\n"
+                "**Custom Career Portal Scrapers (6 Companies):**\n"
+                "These companies do not use standard ATS platforms and are scraped via dedicated proprietary API/DOM scrapers:\n"
+                "• **Flipkart** — Custom Turbohire API/DOM portal scraper\n"
+                "• **Apple** — Official Apple Jobs Search API scraper\n"
+                "• **Amazon** — Amazon.jobs Search API scraper\n"
+                "• **Microsoft** — Microsoft Careers Search API scraper\n"
+                "• **Electronic Arts (EA)** — EA Careers internal API scraper\n"
+                "• **Majid Al Futtaim** — Phenom / SuccessFactors career API scraper\n"
+                "*(Note: Cisco GCC is integrated via Workday ATS, not a custom portal scraper).*\n\n"
+                "**Standard ATS Platform Integrations (5,307 Companies):**\n"
+                "• **Greenhouse** — 2,044 companies\n"
+                "• **Ashby** — 1,499 companies\n"
+                "• **SmartRecruiters** — 999 companies\n"
+                "• **Lever** — 704 companies\n"
+                "• **Workday** — 61 companies\n\n"
+                "**Total Tracked Companies:** 5,313"
+            )
+        else:
+            return (
+                "🛠️ <b>Career Page Scraper Architecture</b>\n\n"
+                "<b>Custom Career Portal Scrapers (6 Companies):</b>\n"
+                "These companies do not use standard ATS boards and are scraped via dedicated proprietary API/DOM scrapers:\n"
+                "• <b>Flipkart</b> — Custom Turbohire portal scraper\n"
+                "• <b>Apple</b> — Official Apple Jobs Search API scraper\n"
+                "• <b>Amazon</b> — Amazon.jobs Search API scraper\n"
+                "• <b>Microsoft</b> — Microsoft Careers Search API scraper\n"
+                "• <b>Electronic Arts (EA)</b> — EA Careers internal API scraper\n"
+                "• <b>Majid Al Futtaim</b> — Phenom / SuccessFactors career API scraper\n"
+                "<i>(Note: Cisco GCC is integrated via Workday ATS, not a custom portal scraper).</i>\n\n"
+                "📡 <b>Standard ATS Platform Integrations (5,307 Companies):</b>\n"
+                "• <b>Greenhouse</b> — 2,044 companies\n"
+                "• <b>Ashby</b> — 1,499 companies\n"
+                "• <b>SmartRecruiters</b> — 999 companies\n"
+                "• <b>Lever</b> — 704 companies\n"
+                "• <b>Workday</b> — 61 companies\n\n"
+                "🌐 <b>Total Tracked Registry:</b> 5,313 companies"
+            )
 
     # 2. Company directory intent
     is_company_list_query = (

@@ -999,3 +999,54 @@ async def test_ask_ai_agent_filter_explanation_fallback(tmp_path: Path, monkeypa
     assert "### GCC Job Radar Filtering Rules" in reply_md
     assert "**Mandatory Inclusion Criteria:**" in reply_md
     assert "**Automatic Exclusion Triggers:**" in reply_md
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_custom_career_scrapers_fallback(monkeypatch) -> None:
+    """Verify queries asking about custom career scrapers and non-ATS boards return accurate breakdown."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    # 1. Telegram HTML path with user query 1
+    q1 = "how many companies are currently present that we do scrap of careers page"
+    reply_html1 = await ask_ai_agent(q1, chat_id="tg-scraper-1")
+    assert "Career Page Scraper Architecture" in reply_html1
+    assert "Custom Career Portal Scrapers (6 Companies)" in reply_html1
+    assert "Flipkart" in reply_html1
+    assert "Apple" in reply_html1
+    assert "Amazon" in reply_html1
+    assert "Microsoft" in reply_html1
+    assert "5,313" in reply_html1
+
+    # 2. Telegram HTML path with user query 2 (mentioning flipkart, apple, cisco)
+    q2 = "i mean like flipkart, apple, cisco and more are not present on any ATS board like that how many companies are present"
+    reply_html2 = await ask_ai_agent(q2, chat_id="tg-scraper-2")
+    assert "Custom Career Portal Scrapers (6 Companies)" in reply_html2
+    assert "Flipkart" in reply_html2
+    assert "Apple" in reply_html2
+    assert "Workday" in reply_html2
+
+    # 3. CLI Markdown path
+    reply_md = await ask_ai_agent(q2, chat_id="cli", as_markdown=True)
+    assert "### Career Page Scraper Architecture" in reply_md
+    assert "**Custom Career Portal Scrapers (6 Companies):**" in reply_md
+    assert "**Total Tracked Companies:** 5,313" in reply_md
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_get_configured_companies_enriched_metadata(tmp_path: Path) -> None:
+    """Verify execute_tool get_configured_companies returns custom scraper count and ATS breakdown."""
+    db_file = tmp_path / "test_comps_meta.db"
+    init_db(db_file)
+
+    res = await execute_tool("get_configured_companies", {"include_all": True}, db_path=db_file)
+    assert res["status"] == "success"
+    assert res["custom_career_scrapers_count"] == 6
+    assert "Flipkart" in res["custom_career_scrapers"]
+    assert "Apple" in res["custom_career_scrapers"]
+    assert "Amazon" in res["custom_career_scrapers"]
+    assert "greenhouse" in res["ats_provider_breakdown"]
+    assert "ashby" in res["ats_provider_breakdown"]
+    assert "note" in res
+

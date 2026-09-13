@@ -17,6 +17,14 @@ from typing import Optional
 
 import httpx
 
+# Ensure Windows terminals handle UTF-8 cleanly
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from gcc_job_radar.clients.custom_career import CustomCareerClient
 from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.db import init_db, record_jobs
@@ -344,7 +352,7 @@ async def main():
             if r["jobs"]:
                 print(f"  [+] KEPT ATS: {r['company']} ({prov_str}:{r['token']}) -> {len(r['jobs'])} entry-level opening(s) (out of {tot} total)")
                 for j in r["jobs"]:
-                    print(f"      💼 {j.title} | {j.location} | {j.apply_url}")
+                    print(f"      * {j.title} | {j.location} | {j.apply_url}")
             else:
                 print(f"  [+] KEPT ATS: {r['company']} ({prov_str}:{r['token']}) -> Monitored ({tot} total open positions)")
         elif status == "KEEP_CUSTOM":
@@ -352,7 +360,7 @@ async def main():
             all_verified_jobs.extend(r["jobs"])
             print(f"  [+] KEPT CAREER PAGE: {r['company']} -> {r['career_url']} -> {len(r['jobs'])} entry-level opening(s)")
             for j in r["jobs"]:
-                print(f"      💼 {j.title} | {j.location} | {j.apply_url}")
+                print(f"      * {j.title} | {j.location} | {j.apply_url}")
 
     print("\n" + "=" * 70)
     print("BATCH PROBE & FILTER SUMMARY")

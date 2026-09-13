@@ -308,10 +308,9 @@ async def main():
     semaphore = asyncio.Semaphore(args.concurrency)
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) gcc-job-radar/probe-batch/1.0"}
 
-    custom_client = CustomCareerClient()
-
     print(f"[*] Scanning {len(companies)} companies across ATS boards & custom career pages...")
     async with httpx.AsyncClient(timeout=5.0, headers=headers, follow_redirects=True) as client:
+        custom_client = CustomCareerClient(client=client)
         tasks = [
             process_company(comp, client, custom_client, existing_names, existing_tokens, semaphore)
             for comp in companies

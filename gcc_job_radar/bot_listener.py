@@ -40,6 +40,7 @@ from gcc_job_radar.db import (
     get_stale_applications,
     get_stats,
     mark_job_status,
+    purge_invalid_jobs,
     record_jobs,
 )
 from gcc_job_radar.scanner import scan_all_companies
@@ -1101,6 +1102,12 @@ async def run_bot_listener(
     async with httpx.AsyncClient(timeout=poll_timeout + 10.0) as client:
         # Sync official bot menu commands with Telegram API on startup
         await sync_telegram_bot_commands(bot_token, client)
+
+        # Purge any pre-existing invalid unreviewed records from earlier scans
+        try:
+            purge_invalid_jobs(db_path)
+        except Exception as err:
+            logger.debug("Startup purge error: %s", err)
 
         while True:
             if max_iterations is not None and iteration >= max_iterations:

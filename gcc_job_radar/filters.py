@@ -491,7 +491,7 @@ def is_entry_level(
     # High-recall matching for additional entry-level / fresher / analyst title terms
     if not title_matches:
         if re.search(
-            r"(?i)\b(?:analyst(?:\s*[-–—]?\s*(?:1|i)\b)?|associate\s+(?:software\s+)?engineer|junior\s+(?:software\s+)?(?:engineer|developer)|graduate\s+engineer\s+trainee|\bget\b|sde\s*[-–—]?\s*1|software\s+engineer\s+1|mts\s*[-–—]?\s*1)\b",
+            r"(?i)(?:^\s*analyst\b|\b(?:data\s+|software\s+|technology\s+|systems?\s+)?analyst\s*[-–—]?\s*(?:1|i)\b|\bassociate\s+(?:software\s+|data\s+)?(?:engineer|analyst)\b|\bjunior\s+(?:software\s+|data\s+)?(?:engineer|developer|analyst)\b|\bgraduate\s+engineer\s+trainee\b|\bget\b|\bsde\s*[-–—]?\s*1\b|\bsoftware\s+engineer\s+1\b|\bmts\s*[-–—]?\s*1\b)",
             clean_title,
         ):
             title_matches = True

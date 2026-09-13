@@ -166,6 +166,34 @@ def cleanup_duplicate_jobs(db_path: Optional[Path] = None) -> int:
         return deleted_by_url + deleted_by_semantic + deleted_by_role
 
 
+def purge_invalid_jobs(db_path: Optional[Path] = None) -> int:
+    """Purge job records from database that fail strict entry-level tech title filters."""
+    target_path = get_db_path(db_path)
+    if not target_path.exists():
+        return 0
+
+    from gcc_job_radar.filters import matches_target_title
+
+    with sqlite3.connect(target_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen_jobs'")
+        if not cursor.fetchone():
+            return 0
+
+        cursor.execute("SELECT id, title FROM seen_jobs WHERE status = 'NEW'")
+        rows = cursor.fetchall()
+        invalid_ids = [row_id for row_id, title in rows if not matches_target_title(title)]
+
+        if invalid_ids:
+            for i in range(0, len(invalid_ids), 500):
+                chunk = invalid_ids[i : i + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor.execute(f"DELETE FROM seen_jobs WHERE id IN ({placeholders})", chunk)
+            conn.commit()
+
+        return len(invalid_ids)
+
+
 def init_db(db_path: Optional[Path] = None) -> None:
     """Initialize SQLite database tables, indexes, and run deduplication cleanup."""
     target_path = get_db_path(db_path)

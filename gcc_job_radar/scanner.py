@@ -22,6 +22,7 @@ from gcc_job_radar.clients.smartrecruiters import SmartRecruitersClient
 from gcc_job_radar.clients.workday import WorkdayClient
 from gcc_job_radar.clients.custom_career import CustomCareerClient
 from gcc_job_radar.config import COMPANIES
+from gcc_job_radar.filters import matches_target_title
 from gcc_job_radar.models import ATSProvider, CompanyConfig, JobPosting
 
 logger = logging.getLogger(__name__)
@@ -323,6 +324,9 @@ async def scan_all_companies(
     for item in gathered_results:
         if isinstance(item, list):
             for post in item:
+                # Defense-in-depth: enforce strict entry-level tech title matching
+                if not matches_target_title(post.title):
+                    continue
                 key = (post.company.lower(), str(post.id).lower())
                 if key not in seen_keys:
                     seen_keys.add(key)

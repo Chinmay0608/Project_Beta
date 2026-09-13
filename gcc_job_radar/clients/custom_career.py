@@ -10,7 +10,7 @@ import httpx
 from pydantic import ValidationError
 
 from gcc_job_radar.clients.base import BaseATSClient, DEFAULT_TIMEOUT
-from gcc_job_radar.filters import matches_india_location, is_remote_opening
+from gcc_job_radar.filters import is_remote_opening, matches_india_location, matches_target_title
 from gcc_job_radar.models import ATSProvider, CompanyConfig, JobPosting
 
 logger = logging.getLogger(__name__)
@@ -106,10 +106,8 @@ class CustomCareerClient(BaseATSClient):
                 if not text or len(text) < 4:
                     continue
 
-                # Filter text strictly: must match tech keywords and not contain excluded professions
-                if not TECH_KEYWORDS_PATTERN.search(text):
-                    continue
-                if NON_TECH_EXCLUDE_PATTERN.search(text):
+                # Filter text strictly: must match target entry-level tech title
+                if not matches_target_title(text):
                     continue
 
                 full_url = urljoin(target_url, href)
@@ -202,7 +200,7 @@ class CustomCareerClient(BaseATSClient):
                         continue
 
                     title = (j.get("JobTitle") or "").strip()
-                    if not title or not TECH_KEYWORDS_PATTERN.search(title) or NON_TECH_EXCLUDE_PATTERN.search(title):
+                    if not title or not matches_target_title(title):
                         continue
 
                     loc_raw = j.get("Location")
@@ -224,7 +222,7 @@ class CustomCareerClient(BaseATSClient):
 
                     exp = j.get("Experience") or {}
                     min_exp = exp.get("MinExp", 0) or 0
-                    if min_exp > 3:
+                    if min_exp > 2:
                         continue
 
                     apply_url = f"{origin}/job/{job_uuid}"

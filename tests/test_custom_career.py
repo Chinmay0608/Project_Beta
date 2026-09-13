@@ -135,3 +135,53 @@ def test_clean_company_slug():
     assert clean_company_slug("Reliance Jio 5G") == "reliance_jio_5g"
     assert clean_company_slug("TCS (Tata Consultancy Services)") == "tcs_tata_consultancy_services"
     assert clean_company_slug("!!!") == "company"
+
+
+@pytest.mark.asyncio
+async def test_custom_career_turbohire_strict_entry_level_filtering():
+    """Verify that TurboHire scraper strictly keeps entry-level tech roles and rejects senior/operations/CA roles."""
+    turbohire_sample = {
+        "Result": [
+            {"JobId": "11111111-0000-0000-0000-000000000001", "JobTitle": "Software Development Engineer 1", "Location": '[{"Address": "Bengaluru, India"}]', "Experience": {"MinExp": 0}},
+            {"JobId": "22222222-0000-0000-0000-000000000002", "JobTitle": "SDE-1", "Location": '[{"Address": "Bengaluru, India"}]', "Experience": {"MinExp": 1}},
+            {"JobId": "33333333-0000-0000-0000-000000000003", "JobTitle": "SDE II Mobile", "Location": '[{"Address": "Bengaluru, India"}]', "Experience": {"MinExp": 3}},
+            {"JobId": "44444444-0000-0000-0000-000000000004", "JobTitle": "Software development Engineer - IV", "Location": '[{"Address": "Bengaluru, India"}]', "Experience": {"MinExp": 5}},
+            {"JobId": "55555555-0000-0000-0000-000000000005", "JobTitle": "Alite QA SPOC Station Request - BBD'26", "Location": '[{"Address": "Bengaluru, India"}]', "Experience": {"MinExp": 0}},
+            {"JobId": "66666666-0000-0000-0000-000000000006", "JobTitle": "Support Engineer - Dark Stores", "Location": '[{"Address": "Bengaluru, India"}]', "Experience": {"MinExp": 0}},
+            {"JobId": "77777777-0000-0000-0000-000000000007", "JobTitle": "System Support Engineer", "Location": '[{"Address": "Jaipur, India"}]', "Experience": {"MinExp": 1}},
+            {"JobId": "88888888-0000-0000-0000-000000000008", "JobTitle": "CA Intern", "Location": '[{"Address": "Bengaluru, India"}]', "Experience": {"MinExp": 0}},
+            {"JobId": "99999999-0000-0000-0000-000000000009", "JobTitle": "Sanpka Gurgaon Intern BBD Hiring", "Location": '[{"Address": "Gurgaon, India"}]', "Experience": {"MinExp": 0}},
+            {"JobId": "aaaaaaaa-0000-0000-0000-000000000010", "JobTitle": "Architect", "Location": '[{"Address": "Bengaluru, India"}]', "Experience": {"MinExp": 8}},
+        ]
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "api/token/noauth" in str(request.url):
+            return httpx.Response(200, json={"access_token": "mock_token"})
+        if "filteredjobs" in str(request.url):
+            return httpx.Response(200, json=turbohire_sample)
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        client = CustomCareerClient(http_client)
+        postings = await client.fetch_jobs(
+            "Flipkart",
+            "https://flipkart.turbohire.co/careerpage/4d757ba0-3d57-448a-b82c-238ed87ac90f",
+        )
+
+        # Only the 2 genuine entry-level roles must be returned
+        assert len(postings) == 2
+        titles = [p.title for p in postings]
+        assert "Software Development Engineer 1" in titles
+        assert "SDE-1" in titles
+
+        # Verify all noisy and senior roles are strictly absent
+        assert not any("SDE II" in t for t in titles)
+        assert not any("Engineer - IV" in t for t in titles)
+        assert not any("BBD" in t for t in titles)
+        assert not any("Dark Stores" in t for t in titles)
+        assert not any("System Support" in t for t in titles)
+        assert not any("CA Intern" in t for t in titles)
+        assert not any("Architect" in t for t in titles)
+

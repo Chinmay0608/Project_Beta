@@ -5398,6 +5398,19 @@ COMPANIES: list[CompanyConfig] = [
     CompanyConfig(name="Wormhole", provider=ATSProvider.ASHBY, board_token="wormholelabs"),
     CompanyConfig(name="Zesty", provider=ATSProvider.GREENHOUSE, board_token="zestyai"),
     CompanyConfig(name="euNetworks", provider=ATSProvider.GREENHOUSE, board_token="eunetworks"),
+
+    # Newly probed and verified companies
+    CompanyConfig(name="Automatticcareers", provider=ATSProvider.GREENHOUSE, board_token="automatticcareers"),
+    CompanyConfig(name="Mistral AI", provider=ATSProvider.ASHBY, board_token="mistral.ai"),
+    CompanyConfig(name="Helsing", provider=ATSProvider.GREENHOUSE, board_token="helsing"),
+    CompanyConfig(name="Alan", provider=ATSProvider.ASHBY, board_token="alan"),
+    CompanyConfig(name="Mollie", provider=ATSProvider.ASHBY, board_token="mollie"),
+    CompanyConfig(name="Oyster", provider=ATSProvider.ASHBY, board_token="oyster"),
+    CompanyConfig(name="Melio", provider=ATSProvider.GREENHOUSE, board_token="melio"),
+    CompanyConfig(name="Back Market", provider=ATSProvider.ASHBY, board_token="backmarket"),
+    CompanyConfig(name="WiseTech Global", provider=ATSProvider.SMARTRECRUITERS, board_token="wisetechglobal"),
+    CompanyConfig(name="Unacademy", provider=ATSProvider.SMARTRECRUITERS, board_token="unacademy"),
+    CompanyConfig(name="Scaler", provider=ATSProvider.SMARTRECRUITERS, board_token="interviewbit"),
 ]
 
 # Strict entry-level tech title positive pattern
@@ -5409,7 +5422,7 @@ INCLUDE_TITLE_PATTERN: re.Pattern[str] = re.compile(
         (?:sde|software\s+(?:development\s+)?engineer|software\s+developer|engineer)\s*[-–—]?\s*(?:1|i)\b |
 
         # Junior & Associate prefixes
-        (?:associate|junior|jr\.?)\s+(?:software\s+|systems?\s+|backend\s+|frontend\s+|full[- ]?stack\s+|cloud\s+|data\s+|platform\s+|qa\s+|test\s+|devops\s+|infrastructure\s+|sdet\b\s*)?(?:engineer|developer|programmer|sdet)\b |
+        (?:associate|junior|jr\.?)\s+(?:software\s+|systems?\s+|backend\s+|frontend\s+|full[- ]?stack\s+|cloud\s+|data\s+|platform\s+|qa\s+|test\s+|devops\s+|infrastructure\s+|sdet\s+|python\s+|java\s+|ai\s+|ml\s+|web\s+|mobile\s+)?(?:engineer|developer|programmer|sdet|analyst)\b |
 
         # Trainee & Graduate tracks
         graduate\s+engineer\s+trainee\b |
@@ -5424,7 +5437,8 @@ INCLUDE_TITLE_PATTERN: re.Pattern[str] = re.compile(
 
         # Banking & Enterprise tracks
         (?:software|systems?|platform|infrastructure|cloud|devops|data|sdet|forward\s+deploy)\s+engineer.*?,\s*(?:analyst|associate)\b |
-        (?:technology|tech|software(?:\s+engineering)?|graduate|systems?)\s+analyst(?:\s*[-–—]?\s*(?:1|i)\b)? |
+        (?:technology|tech|software(?:\s+engineering)?|graduate)\s+analyst(?:\s*[-–—]?\s*(?:1|i)\b)? |
+        (?:systems?\s+analyst|data\s+analyst)\s*[-–—]?\s*(?:1|i)\b |
 
         # Campus & New Grad tracks
         (?:new\s+grad(?:uate)?|university\s+grad(?:uate)?|campus\s+hire|early\s+career)\s*(?:[-–—]\s*)?(?:software\s+|systems?\s+|backend\s+|frontend\s+|full[- ]?stack\s+|cloud\s+|data\s+|platform\s+|qa\s+|test\s+|devops\s+)?(?:engineer|developer|programmer|hire)?\b |
@@ -5454,17 +5468,25 @@ EXCLUDE_TITLE_PATTERN: re.Pattern[str] = re.compile(
         director|architect|manager|head\s+of|tech\s+lead|executive|vp|vice\s+president|
         # Higher level numerals (strict word boundaries to avoid sub-matching UI, IV in words, etc.)
         ii|iii|iv|v|vi|2|3|4|5|6|
-        # Non-engineering / non-tech professions
+        # Non-engineering / non-tech professions & accounting
         sales|marketing|hr|recruiter|recruiting|talent(?:\s+acquisition)?|account\s+executive|
         customer\s+support|customer\s+success|customer\s+experience|support\s+specialist|
         operations(?:\s+executive)?|back\s+office|field\s+executive|telecaller|
         finance|legal|compliance|business\s+development|bdr|sdr|
+        ca\s+intern|ca\s+industrial|chartered\s+accountant|accounting|taxation|audit|
+        # Warehouse / logistics / retail operations
+        bbd\b|bbd['\u2019]?\d*|spoc\b|dark\s+stores?|desktop\s+support|l1\s+support|
+        helpdesk|service\s+desk|hardware\s+support|station\s+request|seller\s+management|seller\s+support|
+        # Medical / Pharma / Life Sciences data services
+        pharma(?:ceutical)?|life\s+sciences?|medical\s+coding|oe\s+coding|
+        # Business Systems / ERP
+        sap\b|fico\b|salesforce\s+business\s+system|business\s+systems?\s+analyst|
         # Pre-sales / Solutions Engineering / Excellence Centers / Support
         solutions?\s+engineer(?:ing)?|sales\s+engineer(?:ing)?|pre[- ]?sales|post[- ]?sales|
         excellence\s+center|center\s+of\s+excellence|se\s+excellence|support\s+engineer(?:ing)?|
         # Non-software engineering disciplines (e.g. Mechanical GET, Civil Engineer Trainee)
-        mechanical|civil|structural|electrical|autocad|teamcenter|
-        piping|hvac|instrumentation|nursing|
+        mechanical|civil|structural|electrical|autocad|teamcenter|geotech(?:nical)?|
+        piping|hvac|instrumentation|nursing|quay|horizontal\s*&\s*yard|crane|
         # Mobile app domains excluded by user preference
         android
     )\b

@@ -988,3 +988,86 @@ SoftSwiss
 European Dynamics
 HRM Group
 Sur Global
+Synack
+instellix
+Pasiona
+SC Media Houses
+Arηs
+Accenture
+EPAM Systems
+NearForm
+Buffer
+GitHub
+Keenious
+Publitas
+MessageBird
+Platform.sh
+Bookingkit
+Spacelift
+The Browser Company
+SpotMe
+GoingVC
+BB Agency
+Cloudbeds
+SwissBorg
+ExpressVPN
+cargo.one
+saas.group
+Ceros
+BitMEX
+Storyblok
+DentalMonitoring
+Mixmax
+Process Street
+Wisedocs AI
+Fixposition
+Yellow Duck Technologies
+AdaptiveVets Solutions
+Enterprise Horizon Consulting
+Google
+Meta
+Apple
+Jane Street
+Citadel
+Stripe
+Watershed
+Rapptr Labs
+Core
+Prospect UI Solutions
+Synack AI
+Lemon.io
+Crew
+Y Combinator
+Accenture Technology
+Arηs Greece
+EPAM Poland
+Pasiona Consulting
+Docplanner Technologies
+Glia Technologies
+SaaSFrame
+Scayle
+Spryker
+commercetools
+Strapi
+Directus
+Hasura Cloud
+Appwrite
+Deno
+Bun
+Turso
+Railway
+Railway.app
+Qovery
+Northflank
+Koyeb
+Scaleway
+Clever Cloud
+Exoscale
+Infomaniak
+UpCloud
+Hetzner
+IONOS
+OVHcloud
+StackIT
+Leaseweb
+Orange Business

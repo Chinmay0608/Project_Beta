@@ -5515,6 +5515,13 @@ COMPANIES: list[CompanyConfig] = [
     CompanyConfig(name="Katalon", provider=ATSProvider.CUSTOM, board_token="katalonhq", career_url="https://careers.katalon.com"),
     CompanyConfig(name="Palo Alto Networks", provider=ATSProvider.CUSTOM, board_token="paloaltonetworks", career_url="https://paloaltonetworks.com/careers"),
     CompanyConfig(name="Scalable Capital", provider=ATSProvider.CUSTOM, board_token="scalablecapital", career_url="https://scalablecapital.com/careers"),
+    CompanyConfig(name="SpotMe", provider=ATSProvider.GREENHOUSE, board_token="spotme"),
+    CompanyConfig(name="cargo.one", provider=ATSProvider.ASHBY, board_token="cargo-one"),
+    CompanyConfig(name="saas.group", provider=ATSProvider.GREENHOUSE, board_token="saasgroup"),
+    CompanyConfig(name="Process Street", provider=ATSProvider.GREENHOUSE, board_token="processstreet"),
+    CompanyConfig(name="Watershed", provider=ATSProvider.ASHBY, board_token="watershed"),
+    CompanyConfig(name="Scaleway", provider=ATSProvider.LEVER, board_token="scaleway"),
+    CompanyConfig(name="IONOS", provider=ATSProvider.GREENHOUSE, board_token="ionos"),
 ]
 
 # Strict entry-level tech title positive pattern

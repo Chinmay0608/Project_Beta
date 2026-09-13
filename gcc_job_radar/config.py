@@ -5499,6 +5499,22 @@ COMPANIES: list[CompanyConfig] = [
     CompanyConfig(name="Wayflyer", provider=ATSProvider.ASHBY, board_token="wayflyer"),
     CompanyConfig(name="Waymo", provider=ATSProvider.GREENHOUSE, board_token="waymo"),
     CompanyConfig(name="Zynga", provider=ATSProvider.GREENHOUSE, board_token="zyngacareers"),
+    CompanyConfig(name="Entropik", provider=ATSProvider.SMARTRECRUITERS, board_token="entropik"),
+    CompanyConfig(name="Dozee", provider=ATSProvider.LEVER, board_token="dozee"),
+    CompanyConfig(name="Unlearn", provider=ATSProvider.ASHBY, board_token="unlearn"),
+    CompanyConfig(name="Shield AI", provider=ATSProvider.ASHBY, board_token="shield-ai"),
+    CompanyConfig(name="Julo", provider=ATSProvider.SMARTRECRUITERS, board_token="julo"),
+    CompanyConfig(name="Keeper Security", provider=ATSProvider.GREENHOUSE, board_token="keepersecurity"),
+    CompanyConfig(name="Pliant", provider=ATSProvider.ASHBY, board_token="pliant"),
+    CompanyConfig(name="Filigran", provider=ATSProvider.ASHBY, board_token="filigran"),
+    CompanyConfig(name="NetBird", provider=ATSProvider.ASHBY, board_token="netbird"),
+    CompanyConfig(name="Kestra", provider=ATSProvider.ASHBY, board_token="kestra"),
+    CompanyConfig(name="SoSafe", provider=ATSProvider.ASHBY, board_token="sosafe"),
+    CompanyConfig(name="Nord Security", provider=ATSProvider.ASHBY, board_token="nord-security"),
+    CompanyConfig(name="Oxylabs", provider=ATSProvider.LEVER, board_token="oxylabs"),
+    CompanyConfig(name="Katalon", provider=ATSProvider.CUSTOM, board_token="katalonhq", career_url="https://careers.katalon.com"),
+    CompanyConfig(name="Palo Alto Networks", provider=ATSProvider.CUSTOM, board_token="paloaltonetworks", career_url="https://paloaltonetworks.com/careers"),
+    CompanyConfig(name="Scalable Capital", provider=ATSProvider.CUSTOM, board_token="scalablecapital", career_url="https://scalablecapital.com/careers"),
 ]
 
 # Strict entry-level tech title positive pattern
@@ -5514,7 +5530,7 @@ INCLUDE_TITLE_PATTERN: re.Pattern[str] = re.compile(
 
         # Trainee & Graduate tracks
         graduate\s+engineer\s+trainee\b |
-        \bget\b(?:\s*[-–—:/]?\s*(?:software|tech|engineering|it|developer|trainee))? |
+        (?:\bget\s*[-–—:/]\s*(?:software|tech|engineering|it|developer|trainee|sde)\b|\b(?:software|tech|it|sde)\s*[-–—:/]?\s*get\b|^\s*get\s*$) |
         software\s+engineer\s+trainee\b |
         engineering\s+trainee\b |
         tech(?:nical|nology)?\s+trainee\b |
@@ -5572,6 +5588,9 @@ EXCLUDE_TITLE_PATTERN: re.Pattern[str] = re.compile(
         # Pre-sales / Solutions Engineering / Excellence Centers / Support
         solutions?\s+engineer(?:ing)?|sales\s+engineer(?:ing)?|pre[- ]?sales|post[- ]?sales|
         excellence\s+center|center\s+of\s+excellence|se\s+excellence|support\s+engineer(?:ing)?|
+        # Website CTAs and marketing phrases
+        get\s+(?:a\s+|the\s+|in\s+|our\s+|more\s+|started|touch|demo|quote|app|help|care|funded|license|insights|paid|it\b|report|play|details|answers|pricing|instant|web\s+hosting|vps)|
+        sign\s+up|log\s+in|schedule\s+a\s+demo|book\s+a\s+demo|contact\s+us|download\s+app|
         # Non-software engineering disciplines (e.g. Mechanical GET, Civil Engineer Trainee)
         mechanical|civil|structural|electrical|autocad|teamcenter|geotech(?:nical)?|
         piping|hvac|instrumentation|nursing|quay|horizontal\s*&\s*yard|crane|

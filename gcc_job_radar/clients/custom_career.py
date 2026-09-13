@@ -111,6 +111,26 @@ class CustomCareerClient(BaseATSClient):
                     continue
 
                 full_url = urljoin(target_url, href)
+                url_lower = full_url.lower()
+
+                # Disqualify external app stores, map links, parked domain ads, and non-job CTAs
+                disqualified_domains = (
+                    "apple.com", "google.com", "play.google.com", "maps.google.com",
+                    "hostinger.com", "porkbun.com", "godaddy.com", "namecheap.com",
+                    "twitter.com", "x.com", "facebook.com", "instagram.com", "youtube.com",
+                    "gartner.com", "forrester.com", "trustradius.com", "g2.com",
+                )
+                if any(d in url_lower for d in disqualified_domains):
+                    continue
+
+                disqualified_paths = (
+                    "/contact", "/contact-us", "/login", "/signup", "/sign-up", "/register",
+                    "/schedule-a-demo", "/request-a-demo", "/demo", "/pricing", "/privacy",
+                    "/terms", "/legal", "/cookie", "/about-us", "/early-access", "/download",
+                )
+                if any(p in url_lower for p in disqualified_paths):
+                    continue
+
                 if full_url in seen_urls:
                     continue
                 seen_urls.add(full_url)

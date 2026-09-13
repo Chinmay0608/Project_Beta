@@ -619,14 +619,20 @@ def ask_command(
     """Ask the AI agent about jobs, stats, companies, or career recommendations."""
     init_db(db_path)
     from gcc_job_radar.ai_agent import ask_ai_agent
+    from rich.markdown import Markdown
 
     with console.status("[bold cyan]Consulting GCC Job Radar AI Agent...[/bold cyan]"):
-        answer = asyncio.run(ask_ai_agent(prompt=question, chat_id="cli", db_path=db_path))
+        answer = asyncio.run(ask_ai_agent(prompt=question, chat_id="cli", db_path=db_path, as_markdown=True))
 
     console.print()
+    renderable = (
+        Markdown(answer)
+        if not (answer.startswith("<") or answer.startswith("ℹ️ <b>") or answer.startswith("🚀 <b>") or answer.startswith("📊 <b>"))
+        else answer
+    )
     console.print(
         Panel(
-            answer,
+            renderable,
             title="[bold cyan]GCC Job Radar • AI Career Agent[/bold cyan]",
             border_style="cyan",
             padding=(1, 2),

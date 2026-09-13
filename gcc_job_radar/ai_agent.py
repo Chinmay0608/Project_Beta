@@ -1,5 +1,6 @@
 """Interactive conversational AI job assistant for GCC Job Radar."""
 
+import asyncio
 import html
 from html.parser import HTMLParser
 import json
@@ -15,6 +16,11 @@ import httpx
 
 # Automatically load environment variables from .env if present
 load_dotenv()
+
+# Ensure repository root is in sys.path so tools.* can be imported seamlessly
+_repo_root = str(Path(__file__).resolve().parent.parent)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
 
 from gcc_job_radar.config import COMPANIES
 from gcc_job_radar.db import (
@@ -72,15 +78,49 @@ SYSTEM_PROMPT = (
     "    - Supporting Tech (+5 to +10 pts each): TypeScript, SQL/PostgreSQL, Redis, Git, Linux.\n"
     "    - Title Affinity Bonus (+10 to +20 pts): Backend Developer, Full Stack, Java Developer, SDE / Software Engineer.\n"
     "  • Higher points indicate a higher match with the candidate's target tech stack. Roles with 0 pts are still verified entry-level tech roles, but without explicit keywords matching those specific stack skills in their title or description.\n\n"
-    "CRITICAL FORMATTING GUIDELINES FOR TELEGRAM:\n"
+    "CRITICAL FORMATTING GUIDELINES FOR TELEGRAM (JOB LISTINGS):\n"
     "- NEVER use markdown tables (no '| ... |' format). Telegram cannot render tables and they look broken and unreadable on mobile screens.\n"
     "- When presenting jobs, ALWAYS present each job as a clean, structured card with emojis and markdown links:\n"
     "  🏢 **Company Name**\n"
     "  💼 Job Title\n"
     "  📍 Location • 📅 Posted Date\n"
     "  🔗 [Apply on ATS](apply_url)\n"
-    "- If multiple jobs are found, separate each job card with a blank line.\n"
-    "- Keep answers concise, crisp, and conversational. Avoid walls of text."
+    "- If multiple jobs are found, separate each job card with a blank line.\n\n"
+    "GENERAL RESPONSE FORMATTING RULES (FOR ALL NON-JOB-LISTING ANSWERS):\n"
+    "- Default to structured markdown: short headers (### or **Header**), bullet points, and numbered lists for steps or priorities.\n"
+    "- Break any answer longer than ~3 sentences into bullets or short labeled sections instead of one paragraph. NEVER output a wall of text or a dense continuous paragraph.\n"
+    "- Bold the key term, metric, or verdict at the start of each bullet (e.g. '**Stale for 9 days** — no status change since Sept 4', '**High Priority** — follow up on Celonis application').\n"
+    "- Use checkbox-style bullets (`- [ ] `) specifically for action items or follow-ups the user still needs to do (e.g. '- [ ] Message recruiter on LinkedIn', '- [ ] Tailor resume for Databricks'). Do NOT use checkboxes for informational bullets (use standard bullets `•` or `-` instead).\n"
+    "- Never open with a throat-clearing intro sentence (e.g., 'Sure, here is a summary...', 'Certainly! I can help with that', 'Here are your priorities:'). Start directly with the structured content.\n"
+    "- Keep it scannable: prefer 4 to 8 short, focused bullets over 2 long, dense ones.\n\n"
+    "FEW-SHOT EXAMPLES FOR GENERAL / CONVERSATIONAL QUESTIONS:\n\n"
+    "User: What should I prioritize this week?\n"
+    "Assistant:\n"
+    "### Weekly Priorities & Action Plan\n\n"
+    "**Immediate Action Items:**\n"
+    "- [ ] **Follow up on Celonis** — Pending for 8 days without status update.\n"
+    "- [ ] **Tailor resume for Databricks** — Associate Java Engineer matches 45 pts of your core stack.\n"
+    "- [ ] **Review fresh email job alerts** — 5 new postings detected in your inbox today.\n\n"
+    "**Strategic Focus:**\n"
+    "• **Backend & Java Roles** — Highest current hiring volume across foreign GCCs this month.\n"
+    "• **Application Momentum** — Maintain 3–5 active submissions weekly for steady pipeline health.\n\n"
+    "User: Summarize my stale applications\n"
+    "Assistant:\n"
+    "### Stale Applications Summary (Pending ≥ 7 Days)\n\n"
+    "**High-Priority Follow-ups:**\n"
+    "- [ ] **Celonis (Associate Software Engineer)** — Applied 9 days ago (Aug 25).\n"
+    "- [ ] **BT Group (Graduate Software Engineer)** — Applied 11 days ago (Aug 23).\n\n"
+    "**Recommended Next Steps:**\n"
+    "• **Reach out on LinkedIn** — Message 1–2 technical recruiters or engineering managers.\n"
+    "• **Check ATS Portal** — Confirm application status has not silently updated to in-review.\n\n"
+    "User: Why was this job filtered out?\n"
+    "Assistant:\n"
+    "### Role Filtering Analysis\n\n"
+    "**Verdict:**\n"
+    "• **Seniority Mismatch** — Title specifies 'Senior Lead Engineer' (requires 5+ years experience). GCC Job Radar strictly targets entry-level and associate roles (0–2 years).\n\n"
+    "**Additional Checks:**\n"
+    "• **Tech Stack Alignment** — 0 pts match with candidate profile (demands C#/.NET instead of Java/Spring).\n"
+    "• **Actionable Alternative** — Check for Associate or Graduate openings at the same company using `/check <company>`."
 )
 
 
@@ -111,6 +151,16 @@ GEMINI_TOOLS = [
                     "type": "OBJECT",
                     "properties": {
                         "limit": {"type": "INTEGER", "description": "Max results to return (default 50)"},
+                    },
+                },
+            },
+            {
+                "name": "get_stale_applications",
+                "description": "Retrieve job postings marked as APPLIED that have been pending without status update for 7+ days (or custom threshold). ALWAYS use when user asks for stale applications, pending follow-ups, or applications awaiting follow-up.",
+                "parameters": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "days": {"type": "INTEGER", "description": "Threshold in days to consider application stale (default 7)."},
                     },
                 },
             },
@@ -221,6 +271,19 @@ OPENAI_TOOLS = [
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "description": "Max results to return (default 50)"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_stale_applications",
+            "description": "Retrieve job postings marked as APPLIED that have been pending without status update for 7+ days (or custom threshold). ALWAYS use when user asks for stale applications, pending follow-ups, or applications awaiting follow-up.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "Threshold in days to consider application stale (default 7)."},
                 },
             },
         },
@@ -439,6 +502,31 @@ async def execute_tool(
                 "published_date": str(j.get("published_date") or "Active")[:10],
             })
         return {"status": "success", "count": len(formatted_jobs), "jobs": formatted_jobs}
+
+    elif name in ("get_stale_applications", "get_followups"):
+        days = int(args.get("days", 7))
+        from gcc_job_radar.db import get_stale_applications
+        stale = get_stale_applications(days=days, db_path=db_path)
+        formatted_stale = []
+        for j in stale[:20]:
+            eff_url, _, _ = resolve_effective_apply_url(j)
+            formatted_stale.append({
+                "id": j.get("numeric_id") or j.get("id"),
+                "company": j.get("company", "Unknown"),
+                "title": j.get("title", "Role"),
+                "location": j.get("location", ""),
+                "applied_at": str(j.get("applied_at") or "")[:10],
+                "applied_days": j.get("applied_days", days),
+                "notes": j.get("notes"),
+                "apply_url": eff_url,
+            })
+        return {
+            "status": "success",
+            "days_threshold": days,
+            "count": len(formatted_stale),
+            "total_stale": len(stale),
+            "stale_jobs": formatted_stale,
+        }
 
     elif name == "get_dismissed_jobs":
         limit = min(max(1, int(args.get("limit", 30))), 50)
@@ -798,7 +886,15 @@ def markdown_to_telegram_html(text: str) -> str:
     # 1. Convert any raw markdown tables to clean card layout
     text = convert_markdown_tables_to_cards(text)
 
-    # 2. Convert markdown bullet points (* or - at start of line) to •
+    # 2. Convert markdown task list checkboxes to visual checkboxes for Telegram
+    # Note: Telegram Bot API uses HTML parse mode in this repository.
+    # Telegram HTML has no native checkbox element; Unicode ballot box characters (☐ / ☑)
+    # render reliably across iOS, Android, and Desktop clients without triggering
+    # MarkdownV2 escaping errors or breaking HTML entity sanitization.
+    text = re.sub(r"(?m)^[\*\-]\s+\[\s*\]\s+", "☐ ", text)
+    text = re.sub(r"(?m)^[\*\-]\s+\[[xX]\]\s+", "☑ ", text)
+
+    # 3. Convert remaining markdown bullet points (* or - at start of line) to •
     text = re.sub(r"(?m)^[\*\-]\s+", "• ", text)
 
     # Replace markdown code blocks ```code``` -> <pre>code</pre>
@@ -817,6 +913,8 @@ def markdown_to_telegram_html(text: str) -> str:
         else:
             # Escape raw & < >
             part = html.escape(part)
+            # Convert markdown headers (### Header) to bold <b>Header</b>
+            part = re.sub(r"(?m)^#{1,6}\s+\**([^\*\n]+?)\**\s*$", r"<b>\1</b>", part)
             # Restore markdown links [title](url) -> <a href="url">title</a>
             part = re.sub(r"\[([^\]]+)\]\((https?://[^\)]+)\)", r'<a href="\2">\1</a>', part)
             # Bold **text** or __text__ -> <b>text</b>
@@ -901,6 +999,29 @@ def format_tool_result_summary(name: str, result: dict[str, Any]) -> str:
             )
         return format_jobs_html(jobs, f"Your Applied Listings ({len(jobs)})")
 
+    if name in ("get_stale_applications", "get_followups"):
+        stale = result.get("stale_jobs", [])
+        days = result.get("days_threshold", 7)
+        if not stale:
+            return (
+                f"🎉 <b>No Stale Applications!</b>\n\n"
+                f"• <b>Status:</b> All your tracked applications are active and under {days} days old.\n"
+                f"• <b>Pipeline:</b> Keep applying to active roles using <code>/latest</code>."
+            )
+        lines = [
+            f"⏳ <b>Stale Applications Summary (Pending ≥ {days} Days) — {len(stale)} Total</b>\n",
+            "<b>Action Required:</b>",
+        ]
+        for j in stale[:8]:
+            comp = html.escape(str(j.get("company", "Company")))
+            title = html.escape(str(j.get("title", "Role")))
+            app_days = j.get("applied_days", days)
+            lines.append(f"☐ <b>{comp} ({title})</b> — Stale for {app_days} days with no status change.")
+        lines.append("\n<b>Recommended Next Steps:</b>")
+        lines.append("• <b>Reach out on LinkedIn</b> — Send a polite check-in to recruiters or engineering managers.")
+        lines.append("• <b>Update Tracker</b> — Log your contact touchpoint with <code>/apply &lt;id&gt; -n \"Followed up\"</code>.")
+        return "\n".join(lines)
+
     if name == "sync_email_jobs":
         jobs = result.get("jobs", [])
         accounts = result.get("accounts_checked", [])
@@ -968,13 +1089,154 @@ def format_tool_result_summary(name: str, result: dict[str, Any]) -> str:
 
 
 async def _fallback_response(
-    query: str, db_path: Optional[Path] = None
+    query: str, db_path: Optional[Path] = None, as_markdown: bool = False
 ) -> str:
     """Rule-based natural language parsing and intent matching when no LLM key is configured."""
     q = query.lower().strip()
+
+    # 0. Stale applications / follow-ups summary intent
+    is_stale_query = (
+        any(phrase in q for phrase in [
+            "stale", "followup", "follow-up", "followups", "follow ups", "pending followup",
+            "pending followups", "stale application", "stale applications", "stale job", "stale jobs"
+        ])
+    )
+    if is_stale_query:
+        from gcc_job_radar.db import get_stale_applications
+        stale = get_stale_applications(days=7, db_path=db_path)
+        if as_markdown:
+            if not stale:
+                return (
+                    "### Stale Applications Summary\n\n"
+                    "• **All Applications Current** — No applications pending follow-up (≥ 7 days without status update).\n"
+                    "• **Active Pipeline** — Keep submitting targeted applications using `/latest` or `/scan`.\n"
+                    "• **Automatic Tracking** — Mark submissions with `/apply <id/company>` to enable automatic stale alerts."
+                )
+            lines = [
+                f"### Stale Applications Summary (Pending ≥ 7 Days) — {len(stale)} Total\n",
+                "**High-Priority Follow-ups:**",
+            ]
+            for j in stale[:8]:
+                comp = j.get("company", "Company")
+                title = j.get("title", "Role")
+                app_days = j.get("applied_days", 7)
+                lines.append(f"- [ ] **{comp} ({title})** — Stale for {app_days} days with no status change.")
+            lines.append("\n**Recommended Next Steps:**")
+            lines.append("• **Reach out on LinkedIn** — Message 1–2 technical recruiters or engineering managers.")
+            lines.append("• **Check ATS Portal** — Confirm application status has not silently updated to in-review.")
+            lines.append("• **Update Tracker** — Log contact date with `/apply <id> -n \"Followed up\"`.")
+            return "\n".join(lines)
+        else:
+            if not stale:
+                return (
+                    "<b>Stale Applications Summary</b>\n\n"
+                    "• <b>All Applications Current</b> — No applications pending follow-up (≥ 7 days without status update).\n"
+                    "• <b>Active Pipeline</b> — Keep submitting targeted applications using <code>/latest</code> or <code>/scan</code>.\n"
+                    "• <b>Automatic Tracking</b> — Mark submissions with <code>/apply &lt;id/company&gt;</code> to enable automatic stale alerts."
+                )
+            lines = [
+                f"⏳ <b>Stale Applications Summary (Pending ≥ 7 Days) — {len(stale)} Total</b>\n",
+                "<b>High-Priority Follow-ups:</b>",
+            ]
+            for j in stale[:8]:
+                comp = html.escape(str(j.get("company", "Company")))
+                title = html.escape(str(j.get("title", "Role")))
+                app_days = j.get("applied_days", 7)
+                lines.append(f"☐ <b>{comp} ({title})</b> — Stale for {app_days} days with no status change.")
+            lines.append("\n<b>Recommended Next Steps:</b>")
+            lines.append("• <b>Reach out on LinkedIn</b> — Message 1–2 technical recruiters or engineering managers.")
+            lines.append("• <b>Check ATS Portal</b> — Confirm application status has not silently updated to in-review.")
+            lines.append("• <b>Update Tracker</b> — Log contact date with <code>/apply &lt;id&gt; -n \"Followed up\"</code>.")
+            return "\n".join(lines)
+
+    # 0a0. Priorities & weekly action plan intent
+    is_priority_query = (
+        any(phrase in q for phrase in [
+            "prioritize", "priority", "priorities", "focus on", "action plan",
+            "what should i do", "what to do", "next step", "next steps", "weekly plan", "weekly priorities"
+        ])
+    )
+    if is_priority_query:
+        from gcc_job_radar.db import get_stale_applications
+        stale = get_stale_applications(days=7, db_path=db_path)
+        if as_markdown:
+            lines = [
+                "### Weekly Priorities & Action Plan\n",
+                "**Immediate Action Items:**",
+            ]
+            if stale:
+                for j in stale[:3]:
+                    comp = j.get("company", "Company")
+                    title = j.get("title", "Role")
+                    app_days = j.get("applied_days", 7)
+                    lines.append(f"- [ ] **Follow up on {comp}** — Stale for {app_days} days ({title}).")
+            else:
+                lines.append("- [ ] **Scan email job alerts** — Run `/email` to sync fresh alerts from your configured mailboxes.")
+                lines.append("- [ ] **Explore new verified GCC roles** — Run `/latest` for new entry-level roles.")
+            lines.append("- [ ] **Tailor resume for top match** — Select a high-relevance role and run `/tailor <id>`.\n")
+            lines.append("**Strategic Focus:**")
+            lines.append("• **Target Core Stack** — Prioritize Java, Spring Boot, and Backend roles (20–45 relevance pts).")
+            lines.append("• **Pipeline Momentum** — Aim for 3–5 high-fit applications weekly for consistent interview momentum.")
+            lines.append("• **Follow-up Discipline** — Re-engage recruiters 7–10 days post-submission.")
+            return "\n".join(lines)
+        else:
+            lines = [
+                "<b>Weekly Priorities &amp; Action Plan</b>\n",
+                "<b>Immediate Action Items:</b>",
+            ]
+            if stale:
+                for j in stale[:3]:
+                    comp = html.escape(str(j.get("company", "Company")))
+                    title = html.escape(str(j.get("title", "Role")))
+                    app_days = j.get("applied_days", 7)
+                    lines.append(f"☐ <b>Follow up on {comp}</b> — Stale for {app_days} days ({title}).")
+            else:
+                lines.append("☐ <b>Scan email job alerts</b> — Run <code>/email</code> to sync fresh alerts from your configured mailboxes.")
+                lines.append("☐ <b>Explore new verified GCC roles</b> — Run <code>/latest</code> for new entry-level roles.")
+            lines.append("☐ <b>Tailor resume for top match</b> — Select a high-relevance role and run <code>/tailor &lt;id&gt;</code>.\n")
+            lines.append("<b>Strategic Focus:</b>")
+            lines.append("• <b>Target Core Stack</b> — Prioritize Java, Spring Boot, and Backend roles (20–45 relevance pts).")
+            lines.append("• <b>Pipeline Momentum</b> — Aim for 3–5 high-fit applications weekly for consistent interview momentum.")
+            lines.append("• <b>Follow-up Discipline</b> — Re-engage recruiters 7–10 days post-submission.")
+            return "\n".join(lines)
+
+    # 0a0b. Filter rules & explanation intent
+    is_filter_query = (
+        ("filter" in q or "filtered" in q or "filtering" in q)
+        and any(w in q for w in [
+            "why", "how", "what", "criteria", "rule", "rules", "out", "exclude", "excluded", "drop", "dropped", "explain"
+        ])
+    )
+    if is_filter_query:
+        if as_markdown:
+            return (
+                "### GCC Job Radar Filtering Rules\n\n"
+                "**Mandatory Inclusion Criteria:**\n"
+                "• **Entry-Level Seniority** — Must match graduate, associate, junior, intern, or entry-level titles (0–2 years experience).\n"
+                "• **Technical Roles** — Software engineering, backend, frontend, data, cloud, DevOps, QA, or cybersecurity.\n"
+                "• **Location Verification** — Must be located in India (Bengaluru, Hyderabad, Pune, Gurgaon, etc.) or fully remote worldwide.\n\n"
+                "**Automatic Exclusion Triggers:**\n"
+                "• **Senior Titles** — Senior, Lead, Principal, Architect, Staff, Manager, Director (requires 3+ years experience).\n"
+                "• **Foreign Locations** — Roles exclusively outside India without India/remote placement.\n"
+                "• **Non-Tech Functions** — HR, sales, legal, marketing, administrative, and operations.\n"
+                "• **Staffing Agencies** — Non-GCC third-party recruitment agencies and aggregators."
+            )
+        else:
+            return (
+                "<b>GCC Job Radar Filtering Rules</b>\n\n"
+                "<b>Mandatory Inclusion Criteria:</b>\n"
+                "• <b>Entry-Level Seniority</b> — Must match graduate, associate, junior, intern, or entry-level titles (0–2 years experience).\n"
+                "• <b>Technical Roles</b> — Software engineering, backend, frontend, data, cloud, DevOps, QA, or cybersecurity.\n"
+                "• <b>Location Verification</b> — Must be located in India (Bengaluru, Hyderabad, Pune, Gurgaon, etc.) or fully remote worldwide.\n\n"
+                "<b>Automatic Exclusion Triggers:</b>\n"
+                "• <b>Senior Titles</b> — Senior, Lead, Principal, Architect, Staff, Manager, Director (requires 3+ years experience).\n"
+                "• <b>Foreign Locations</b> — Roles exclusively outside India without India/remote placement.\n"
+                "• <b>Non-Tech Functions</b> — HR, sales, legal, marketing, administrative, and operations.\n"
+                "• <b>Staffing Agencies</b> — Non-GCC third-party recruitment agencies and aggregators."
+            )
+
     # 0. Question about points / score / pts (e.g. "what does these points means", "what is pts")
     is_points_query = (
-
         any(phrase in q for phrase in [
             "what does these points mean", "what do these points mean", "what does this point mean",
             "what does the points mean", "what do the points mean", "what is pts", "what are pts",
@@ -986,15 +1248,28 @@ async def _fallback_response(
         or ("pts" in q and any(w in q for w in ["what", "mean", "why", "explain"]))
     )
     if is_points_query:
-        return (
-            "🎯 <b>What do the points (e.g. <code>[15 pts]</code>, <code>[10 pts]</code>) mean?</b>\n\n"
-            "The points represent your <b>Personal Tech-Stack Relevance Score</b> (0 to 100), calculated automatically for each role based on how strongly it matches your target skillset:\n\n"
-            "• <b>Core Stack (+20 to +25 pts each):</b> Java, Spring Boot 3, MERN (MongoDB, Express, React, Node.js), Apache Kafka, MySQL\n"
-            "• <b>Architecture & DevOps (+10 to +15 pts each):</b> Docker, JWT Authentication, GitHub Actions, CI/CD, Microservices / REST APIs\n"
-            "• <b>Supporting Tech (+5 to +10 pts each):</b> TypeScript, SQL/PostgreSQL, Redis, Git, Linux\n"
-            "• <b>Title Affinity Bonus (+10 to +20 pts):</b> Backend Developer, Full Stack, SDE / Software Engineer\n\n"
-            "🏆 <b>Higher points = Stronger match</b> for your technical profile! Roles with 0 pts are still verified entry-level tech openings, but without explicit keywords from your primary tech stack in the job title/description."
-        )
+        if as_markdown:
+            return (
+                "### Personal Tech-Stack Relevance Score Explained\n\n"
+                "**Relevance Point Breakdown (0 to 100):**\n"
+                "• **Core Stack (+20 to +25 pts each):** Java, Spring Boot 3, MERN (MongoDB, Express, React, Node.js), Apache Kafka, MySQL\n"
+                "• **Architecture & DevOps (+10 to +15 pts each):** Docker, JWT Authentication, GitHub Actions, CI/CD, Microservices / REST APIs\n"
+                "• **Supporting Tech (+5 to +10 pts each):** TypeScript, SQL/PostgreSQL, Redis, Git, Linux\n"
+                "• **Title Affinity Bonus (+10 to +20 pts):** Backend Developer, Full Stack, SDE / Software Engineer\n\n"
+                "**Scoring Verdict:**\n"
+                "• **Higher Points = Stronger Fit:** 30+ pts indicates direct technical alignment with your profile.\n"
+                "• **Baseline Openings:** Roles with 0 pts are still verified entry-level tech openings, but without explicit keywords from your primary tech stack."
+            )
+        else:
+            return (
+                "🎯 <b>What do the points (e.g. <code>[15 pts]</code>, <code>[10 pts]</code>) mean?</b>\n\n"
+                "The points represent your <b>Personal Tech-Stack Relevance Score</b> (0 to 100), calculated automatically for each role based on how strongly it matches your target skillset:\n\n"
+                "• <b>Core Stack (+20 to +25 pts each):</b> Java, Spring Boot 3, MERN (MongoDB, Express, React, Node.js), Apache Kafka, MySQL\n"
+                "• <b>Architecture & DevOps (+10 to +15 pts each):</b> Docker, JWT Authentication, GitHub Actions, CI/CD, Microservices / REST APIs\n"
+                "• <b>Supporting Tech (+5 to +10 pts each):</b> TypeScript, SQL/PostgreSQL, Redis, Git, Linux\n"
+                "• <b>Title Affinity Bonus (+10 to +20 pts):</b> Backend Developer, Full Stack, SDE / Software Engineer\n\n"
+                "🏆 <b>Higher points = Stronger match</b> for your technical profile! Roles with 0 pts are still verified entry-level tech openings, but without explicit keywords from your primary tech stack in the job title/description."
+            )
 
     # 0a. Query applied jobs intent (e.g. "pull out the applied sheet", "applied list", "show applied roles", "where are rest")
     is_applied_query = (
@@ -1299,14 +1574,28 @@ async def _fallback_response(
             )
 
     # 6. Generic helpful response
+    if as_markdown:
+        return (
+            "### GCC Job Radar Assistant Guidance\n\n"
+            "I couldn't find an exact match for your request.\n\n"
+            "**Recommended Career Commands & Queries:**\n"
+            "• **Role Search** — e.g. \"Find Python jobs in Bangalore\"\n"
+            "• **Live ATS Verification** — e.g. \"Check Celonis live\" or \"Scan Databricks\"\n"
+            "• **Stale Applications** — e.g. \"Summarize my stale applications\"\n"
+            "• **Weekly Priorities** — e.g. \"What should I prioritize this week?\"\n"
+            "• **Email Alert Sync** — e.g. \"Go through all 3 email accounts for jobs\"\n"
+            "• **Resume Tailoring** — e.g. \"Tailor resume for Celonis\""
+        )
     return (
-        "🤖 <i>I couldn't find an exact match for your request.</i>\n\n"
-        "Try asking for specific roles, companies, or cities:\n"
-        "• <i>\"Find Python jobs in Bangalore\"</i>\n"
-        "• <i>\"List all companies\"</i>\n"
-        "• <i>\"Check Celonis live\"</i>\n"
-        "• <i>\"Show stats\"</i>\n\n"
-        "Or use <code>/latest</code> to see recent openings."
+        "🤖 <b>GCC Job Radar Assistant Guidance</b>\n\n"
+        "<i>I couldn't find an exact match for your request.</i>\n\n"
+        "<b>Recommended Career Commands &amp; Queries:</b>\n"
+        "• <b>Role Search</b> — e.g. \"Find Python jobs in Bangalore\"\n"
+        "• <b>Live ATS Verification</b> — e.g. \"Check Celonis live\" or \"Scan Databricks\"\n"
+        "• <b>Stale Applications</b> — e.g. \"Summarize my stale applications\"\n"
+        "• <b>Weekly Priorities</b> — e.g. \"What should I prioritize this week?\"\n"
+        "• <b>Email Alert Sync</b> — e.g. \"Go through all 3 email accounts for jobs\"\n"
+        "• <b>Resume Tailoring</b> — e.g. \"Tailor resume for Celonis\""
     )
 
 
@@ -1319,6 +1608,7 @@ async def _call_gemini(
     api_key: str,
     client: httpx.AsyncClient,
     db_path: Optional[Path] = None,
+    as_markdown: bool = False,
 ) -> Optional[str]:
     """Call Google Gemini REST API with multi-turn tool calling and conversational synthesis."""
     model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
@@ -1386,7 +1676,7 @@ async def _call_gemini(
             # Model provided direct text response without tool invocation (e.g. general questions or 2+2)
             text = "".join(p.get("text", "") for p in parts if "text" in p)
             if text:
-                return markdown_to_telegram_html(text)
+                return text if as_markdown else markdown_to_telegram_html(text)
             err_msg = f"[AI Agent Error] Gemini candidate had no text and no functionCall: {parts}"
             _safe_print(err_msg, file=sys.stderr)
             logger.error(err_msg)
@@ -1427,6 +1717,7 @@ async def _call_openai_compatible(
     model: str,
     provider_name: str = "OpenAI",
     db_path: Optional[Path] = None,
+    as_markdown: bool = False,
 ) -> Optional[str]:
     """Call OpenAI-compatible REST API (OpenAI, Groq, etc.) with multi-turn tool calling."""
     url = f"{base_url.rstrip('/')}/chat/completions"
@@ -1485,7 +1776,7 @@ async def _call_openai_compatible(
         if not tool_calls:
             text = msg.get("content", "")
             if text:
-                return markdown_to_telegram_html(text)
+                return text if as_markdown else markdown_to_telegram_html(text)
             err_msg = f"[AI Agent Error] {provider_name} response had no content and no tool_calls: {msg}"
             _safe_print(err_msg, file=sys.stderr)
             logger.error(err_msg)
@@ -1533,6 +1824,7 @@ async def _call_groq(
     api_key: str,
     client: httpx.AsyncClient,
     db_path: Optional[Path] = None,
+    as_markdown: bool = False,
 ) -> Optional[str]:
     """Call Groq REST API using high-performance open models (e.g. openai/gpt-oss-120b)."""
     base_url = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
@@ -1546,6 +1838,7 @@ async def _call_groq(
         model=model,
         provider_name="Groq",
         db_path=db_path,
+        as_markdown=as_markdown,
     )
 
 
@@ -1555,6 +1848,7 @@ async def _call_openai(
     api_key: str,
     client: httpx.AsyncClient,
     db_path: Optional[Path] = None,
+    as_markdown: bool = False,
 ) -> Optional[str]:
     """Call OpenAI REST API with multi-turn tool calling."""
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -1568,6 +1862,7 @@ async def _call_openai(
         model=model,
         provider_name="OpenAI",
         db_path=db_path,
+        as_markdown=as_markdown,
     )
 
 
@@ -1579,8 +1874,9 @@ async def ask_ai_agent(
     chat_id: str | int = "cli",
     db_path: Optional[Path] = None,
     client: Optional[httpx.AsyncClient] = None,
+    as_markdown: bool = False,
 ) -> str:
-    """Ask the conversational AI agent a question, returning formatted HTML reply.
+    """Ask the conversational AI agent a question, returning formatted reply.
 
     Uses smart provider shifting:
     1. Primary: Gemini (if GEMINI_API_KEY is configured).
@@ -1622,25 +1918,25 @@ async def ask_ai_agent(
         if primary_pref == "groq" and groq_key:
             # 1. Primary: Groq (ultra-fast ~2s LPU inference)
             _safe_print("[AI Agent] Attempting primary provider: Groq...")
-            response = await _call_groq(prompt, history, groq_key, client, db_path=db_path)
+            response = await _call_groq(prompt, history, groq_key, client, db_path=db_path, as_markdown=as_markdown)
 
             # 2. Smart shift to Gemini if Groq failed
             if not response and gemini_key:
                 _safe_print("[AI Agent] [Shift] Smart shifting to Gemini (Groq unavailable or failed)...")
                 logger.info("Smart shifting to Gemini")
-                response = await _call_gemini(prompt, history, gemini_key, client, db_path=db_path)
+                response = await _call_gemini(prompt, history, gemini_key, client, db_path=db_path, as_markdown=as_markdown)
 
             # 3. Tertiary: OpenAI
             if not response and openai_key:
                 _safe_print("[AI Agent] [Shift] Shifting to OpenAI provider...")
                 logger.info("Shifting to OpenAI provider")
-                response = await _call_openai(prompt, history, openai_key, client, db_path=db_path)
+                response = await _call_openai(prompt, history, openai_key, client, db_path=db_path, as_markdown=as_markdown)
         else:
             # Default primary: Gemini (with fast gemini-3.1-flash-lite and smart shifting)
             # 1. Primary: Gemini
             if gemini_key:
                 _safe_print("[AI Agent] Attempting primary provider: Gemini...")
-                response = await _call_gemini(prompt, history, gemini_key, client, db_path=db_path)
+                response = await _call_gemini(prompt, history, gemini_key, client, db_path=db_path, as_markdown=as_markdown)
 
             # 2. Smart shift to Groq if Gemini failed or was unconfigured
             if not response and groq_key:
@@ -1650,20 +1946,20 @@ async def ask_ai_agent(
                 else:
                     _safe_print("[AI Agent] Attempting provider: Groq...")
                     logger.info("Attempting provider: Groq")
-                response = await _call_groq(prompt, history, groq_key, client, db_path=db_path)
+                response = await _call_groq(prompt, history, groq_key, client, db_path=db_path, as_markdown=as_markdown)
 
             # 3. Tertiary: OpenAI
             if not response and openai_key:
                 _safe_print("[AI Agent] [Shift] Shifting to OpenAI provider...")
                 logger.info("Shifting to OpenAI provider")
-                response = await _call_openai(prompt, history, openai_key, client, db_path=db_path)
+                response = await _call_openai(prompt, history, openai_key, client, db_path=db_path, as_markdown=as_markdown)
 
         # 4. Final: Deterministic NLP fallback
         if not response:
             if detected:
                 _safe_print("[AI Agent] [Notice] All configured LLMs failed; falling back to rule-based NLP engine")
                 logger.warning("All LLMs failed; falling back to rule-based engine")
-            response = await _fallback_response(prompt, db_path=db_path)
+            response = await _fallback_response(prompt, db_path=db_path, as_markdown=as_markdown)
 
         # Update memory on success
         _chat_manager.add_turn(chat_id, "user", prompt)
@@ -1674,8 +1970,9 @@ async def ask_ai_agent(
         err_msg = f"[AI Agent Error] Exception during ask_ai_agent: {exc}"
         _safe_print(err_msg, file=sys.stderr)
         logger.error(err_msg)
-        return await _fallback_response(prompt, db_path=db_path)
+        return await _fallback_response(prompt, db_path=db_path, as_markdown=as_markdown)
 
     finally:
         if own_client:
             await client.aclose()
+

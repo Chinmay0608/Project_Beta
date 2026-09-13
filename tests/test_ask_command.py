@@ -23,7 +23,7 @@ def test_cli_ask_execution(tmp_path: Path) -> None:
     db_file = tmp_path / "test_ask.db"
     init_db(db_file)
 
-    async def mock_ask(prompt, chat_id="cli", db_path=None, client=None):
+    async def mock_ask(prompt, chat_id="cli", db_path=None, client=None, **kwargs):
         return f"Found 3 Java roles matching your query '{prompt}'."
 
     with patch("gcc_job_radar.ai_agent.ask_ai_agent", side_effect=mock_ask):

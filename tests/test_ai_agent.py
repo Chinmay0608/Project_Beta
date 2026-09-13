@@ -872,3 +872,130 @@ async def test_ask_ai_agent_tailor_fallback(tmp_path: Path, sample_jobs: list[Jo
         assert "Celonis" in reply
         assert "Celonis.tex" in reply
         assert "Celonis.pdf" in reply
+
+
+def test_markdown_to_telegram_html_headers_and_checkboxes() -> None:
+    """Verify markdown headers and task list checkboxes convert to Telegram-safe HTML."""
+    raw_md = (
+        "### Weekly Action Items\n\n"
+        "- [ ] **Follow up on Celonis** — Pending 8 days\n"
+        "- [x] **Applied to Databricks** — Completed\n"
+        "• **Backend Focus** — Priority stack Java/Spring"
+    )
+    res = markdown_to_telegram_html(raw_md)
+    # Header converted to bold
+    assert "<b>Weekly Action Items</b>" in res
+    # Checkbox converted to visual Unicode ballot box
+    assert "☐ <b>Follow up on Celonis</b> — Pending 8 days" in res
+    assert "☑ <b>Applied to Databricks</b> — Completed" in res
+    # Bullet preserved
+    assert "• <b>Backend Focus</b> — Priority stack Java/Spring" in res
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_get_stale_applications(tmp_path: Path, sample_jobs: list[JobPosting]) -> None:
+    """Verify execute_tool handles get_stale_applications correctly."""
+    db_file = tmp_path / "test_stale_tool.db"
+    init_db(db_file)
+    record_jobs([sample_jobs[0]], db_file)
+    mark_job_status(1, status="APPLIED", notes="Test note", db_path=db_file)
+
+    stale_mock_job = {
+        "id": "job-python-01",
+        "numeric_id": 1,
+        "company": "Celonis",
+        "title": "Associate Python Engineer",
+        "location": "Bengaluru",
+        "applied_at": "2026-08-01 10:00:00",
+        "applied_days": 10,
+        "notes": "Test note",
+        "apply_url": "https://example.com/apply",
+    }
+    with patch("gcc_job_radar.db.get_stale_applications", return_value=[stale_mock_job]):
+        res = await execute_tool("get_stale_applications", {"days": 7}, db_path=db_file)
+        assert res["status"] == "success"
+        assert res["count"] == 1
+        assert res["total_stale"] == 1
+        assert res["stale_jobs"][0]["company"] == "Celonis"
+        assert res["stale_jobs"][0]["applied_days"] == 10
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_prioritize_fallback(tmp_path: Path, monkeypatch) -> None:
+    """Verify 'What should I prioritize this week?' returns structured headers, checkboxes, and bullets."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    db_file = tmp_path / "test_prio.db"
+    init_db(db_file)
+
+    # 1. Telegram delivery path (default HTML)
+    reply_html = await ask_ai_agent("What should I prioritize this week?", chat_id="test-prio-tg", db_path=db_file)
+    assert "Priorities" in reply_html
+    assert "Immediate Action Items" in reply_html
+    assert "☐" in reply_html  # Visual checkbox in Telegram HTML
+    assert "•" in reply_html  # Bullet point
+    assert "<b>" in reply_html  # Bold key terms
+
+    # 2. CLI delivery path (as_markdown=True)
+    reply_md = await ask_ai_agent("What should I prioritize this week?", chat_id="cli", db_path=db_file, as_markdown=True)
+    assert "### Weekly Priorities & Action Plan" in reply_md
+    assert "- [ ]" in reply_md  # Markdown checkbox for CLI Rich rendering
+    assert "•" in reply_md
+    assert "**" in reply_md
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_stale_applications_fallback(tmp_path: Path, monkeypatch) -> None:
+    """Verify 'Summarize my stale applications' returns structured summary."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    db_file = tmp_path / "test_stale_q.db"
+    init_db(db_file)
+
+    stale_mock_job = {
+        "id": "job-python-01",
+        "numeric_id": 1,
+        "company": "Celonis",
+        "title": "Associate Python Engineer",
+        "location": "Bengaluru",
+        "applied_at": "2026-08-01 10:00:00",
+        "applied_days": 12,
+        "notes": "Followed up once",
+        "apply_url": "https://example.com/apply",
+    }
+    with patch("gcc_job_radar.db.get_stale_applications", return_value=[stale_mock_job]):
+        # Telegram path
+        reply_html = await ask_ai_agent("Summarize my stale applications", chat_id="test-stale-tg", db_path=db_file)
+        assert "Stale Applications Summary" in reply_html
+        assert "Celonis" in reply_html
+        assert "12 days" in reply_html
+        assert "☐" in reply_html
+
+        # CLI path
+        reply_md = await ask_ai_agent("Summarize my stale applications", chat_id="cli", db_path=db_file, as_markdown=True)
+        assert "### Stale Applications Summary" in reply_md
+        assert "- [ ]" in reply_md
+        assert "**Celonis (Associate Python Engineer)**" in reply_md
+
+
+@pytest.mark.asyncio
+async def test_ask_ai_agent_filter_explanation_fallback(tmp_path: Path, monkeypatch) -> None:
+    """Verify 'Why was this job filtered out?' returns structured filtering rules."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    reply_html = await ask_ai_agent("Why was this job filtered out?", chat_id="test-filter-tg")
+    assert "Filtering Rules" in reply_html
+    assert "Entry-Level Seniority" in reply_html
+    assert "Senior Titles" in reply_html
+    assert "•" in reply_html
+
+    reply_md = await ask_ai_agent("Why was this job filtered out?", chat_id="cli", as_markdown=True)
+    assert "### GCC Job Radar Filtering Rules" in reply_md
+    assert "**Mandatory Inclusion Criteria:**" in reply_md
+    assert "**Automatic Exclusion Triggers:**" in reply_md

@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
@@ -780,6 +780,36 @@ async def test_tailor_command(tmp_path: Path, sample_jobs: list[JobPosting]) -> 
             body = captured[-1].read().decode("utf-8")
             assert "Tailored Resume Generated" in body
             assert "Celonis.tex" in body
+
+
+@pytest.mark.asyncio
+async def test_run_bot_listener_409_conflict_handling() -> None:
+    """Verify run_bot_listener handles 409 Conflict gracefully and logs appropriately."""
+    calls = 0
+
+    class MockAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        async def get(self, url, params=None):
+            nonlocal calls
+            calls += 1
+            return httpx.Response(409, text='{"ok":false,"error_code":409,"description":"Conflict"}')
+
+    mock_sleep = AsyncMock()
+    with patch("gcc_job_radar.bot_listener.httpx.AsyncClient", return_value=MockAsyncClient()):
+        from gcc_job_radar.bot_listener import run_bot_listener
+        await run_bot_listener(
+            bot_token="test_token",
+            allowed_chat_id="123456",
+            max_iterations=1,
+            sleep_func=mock_sleep,
+        )
+        mock_sleep.assert_called_with(5)
+
 
 
 

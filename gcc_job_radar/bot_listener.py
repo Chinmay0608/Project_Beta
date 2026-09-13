@@ -1031,6 +1031,8 @@ async def run_bot_listener(
     allowed_chat_id: Optional[str] = None,
     db_path: Optional[Path] = None,
     poll_timeout: int = 20,
+    max_iterations: Optional[int] = None,
+    sleep_func: Any = asyncio.sleep,
 ) -> None:
     """Run long-polling loop to listen for Telegram commands and callback queries."""
     bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
@@ -1059,9 +1061,14 @@ async def run_bot_listener(
 
     offset: Optional[int] = None
     url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
+    iteration = 0
 
     async with httpx.AsyncClient(timeout=poll_timeout + 10.0) as client:
         while True:
+            if max_iterations is not None and iteration >= max_iterations:
+                break
+            iteration += 1
+
             try:
                 params: dict[str, Any] = {"timeout": poll_timeout}
                 if offset is not None:
@@ -1069,8 +1076,15 @@ async def run_bot_listener(
 
                 resp = await client.get(url, params=params)
                 if resp.status_code != 200:
-                    logger.warning("Telegram getUpdates returned status %s: %s", resp.status_code, resp.text)
-                    await asyncio.sleep(3)
+                    if resp.status_code == 409:
+                        logger.warning(
+                            "Telegram getUpdates returned 409 Conflict: another instance is connected. "
+                            "This is expected during zero-downtime rolling deployments while the previous container shuts down. Retrying in 5s..."
+                        )
+                        await sleep_func(5)
+                    else:
+                        logger.warning("Telegram getUpdates returned status %s: %s", resp.status_code, resp.text)
+                        await sleep_func(3)
                     continue
 
                 data = resp.json()
@@ -1151,8 +1165,8 @@ async def run_bot_listener(
                 logger.error(
                     "Connection timeout connecting to api.telegram.org. If your local ISP blocks Telegram API, enable WARP/VPN or configure a proxy."
                 )
-                await asyncio.sleep(5)
+                await sleep_func(5)
             except Exception as exc:
                 logger.error("Error in bot polling loop: %s", exc)
-                await asyncio.sleep(2)
+                await sleep_func(2)
 

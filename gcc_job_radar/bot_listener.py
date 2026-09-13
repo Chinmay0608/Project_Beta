@@ -55,6 +55,39 @@ logger = logging.getLogger(__name__)
 _is_scanning: bool = False
 _last_scan_timestamp: float = 0.0
 
+DEFAULT_MENU_COMMANDS: list[dict[str, str]] = [
+    {"command": "scan", "description": "Scan active GCCs for entry-level roles"},
+    {"command": "latest", "description": "View 5 latest verified openings"},
+    {"command": "email", "description": "Sync 3 email accounts for job alerts"},
+    {"command": "tailor", "description": "Generate tailored PDF resume for job"},
+    {"command": "applied", "description": "View your active applied roles"},
+    {"command": "followups", "description": "View stale applications needing follow-up"},
+    {"command": "stats", "description": "View database stats & pipeline"},
+    {"command": "help", "description": "Show commands & AI usage guide"},
+]
+
+
+async def sync_telegram_bot_commands(
+    bot_token: str,
+    client: httpx.AsyncClient,
+    commands: Optional[list[dict[str, str]]] = None,
+) -> bool:
+    """Sync official Telegram bot commands menu via setMyCommands API."""
+    url = f"https://api.telegram.org/bot{bot_token}/setMyCommands"
+    cmds = commands or DEFAULT_MENU_COMMANDS
+    try:
+        resp = await client.post(url, json={"commands": cmds}, timeout=10.0)
+        if resp.status_code == 200 and resp.json().get("ok"):
+            logger.info("Successfully synced %d Telegram bot menu commands.", len(cmds))
+            return True
+        else:
+            logger.warning("Failed to sync Telegram bot commands (status %s): %s", resp.status_code, resp.text)
+            return False
+    except Exception as exc:
+        logger.warning("Error syncing Telegram bot commands: %s", exc)
+        return False
+
+
 
 def split_telegram_message(text: str, max_length: int = 3950) -> list[str]:
     """Split a long message into safe chunks <= max_length (Telegram's hard limit is 4096).
@@ -280,23 +313,25 @@ async def handle_command(
 
     if cmd in ("/start", "/help", "/list"):
         help_text = (
-            "📋 <b>GCC Radar Commands:</b>\n"
-            "• <code>/scan</code> — Scan active GCCs (use <code>/scan all</code> to include applied/dismissed)\n"
-            "• <code>/email</code> — Scan your 3 email accounts for job alerts\n"
-            "• <code>/check &lt;name&gt;</code> — Check single company\n"
-            "• <code>/latest</code> — Show 5 recent openings\n"
-            "• <code>/applied</code> — View your applied roles\n"
-            "• <code>/dismissed</code> — View your dismissed roles & companies\n"
-            "• <code>/followups</code> — View pending follow-ups (applied &gt;= 7d)\n"
-            "• <code>/stats</code> — View database stats & pipeline\n"
+            "📋 <b>GCC Radar — Bot Commands Menu</b>\n\n"
+            "⚡ <b>Core Actions (In [/] Menu):</b>\n"
+            "• <code>/scan</code> — Scan active GCCs for entry-level roles (or <code>/scan all</code>)\n"
+            "• <code>/latest</code> — View 5 latest verified openings with quick buttons\n"
+            "• <code>/email</code> — Sync 3 email accounts for job alerts\n"
+            "• <code>/tailor &lt;id/company&gt;</code> — Generate tailored LaTeX &amp; PDF resume\n"
+            "• <code>/applied</code> — View your active applied roles\n"
+            "• <code>/followups</code> — View stale applications needing follow-up (7d+)\n"
+            "• <code>/stats</code> — View database stats &amp; pipeline\n"
+            "• <code>/help</code> — Show commands &amp; AI usage guide\n\n"
+            "🎯 <b>Tracker &amp; Quick Actions:</b>\n"
+            "• <code>/check &lt;name&gt;</code> — Check single company live (e.g. <code>/check celonis</code>)\n"
             "• <code>/apply &lt;id/company&gt; [-n note]</code> — Mark job(s) as APPLIED\n"
-            "• <code>/tailor &lt;id/company&gt;</code> — Tailor &amp; compile customized PDF resume\n"
-            "• <code>/dismiss &lt;id(s)/company&gt;</code> — Dismiss job(s)\n"
-            "• <code>/restore &lt;id(s)/company&gt;</code> — Restore job(s) to NEW\n"
+            "• <code>/dismiss &lt;id(s)/company&gt;</code> — Dismiss job(s) from radar\n"
+            "• <code>/dismissed</code> — View your dismissed roles &amp; companies\n"
+            "• <code>/restore &lt;id(s)/company&gt;</code> — Restore job(s) back to NEW\n"
             "• <code>/clear</code> — Clear AI conversation memory\n"
-            "• <code>/list</code> — Show this menu\n\n"
-            "💡 <i>Tip: Pass IDs (e.g. <code>/dismiss 1, 2, 4</code>) or company names (e.g. <code>/apply uipath, celonis</code>).</i>\n"
-            "💬 <i>Or ask any question in plain text to chat with the AI assistant!</i>"
+            "• <code>/list</code> — Show this commands menu\n\n"
+            "💬 <i>You can also ask questions in plain English to chat with the AI assistant!</i>"
         )
         await send_telegram_reply(bot_token, chat_id, help_text, client)
 
@@ -1064,6 +1099,9 @@ async def run_bot_listener(
     iteration = 0
 
     async with httpx.AsyncClient(timeout=poll_timeout + 10.0) as client:
+        # Sync official bot menu commands with Telegram API on startup
+        await sync_telegram_bot_commands(bot_token, client)
+
         while True:
             if max_iterations is not None and iteration >= max_iterations:
                 break

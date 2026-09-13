@@ -799,6 +799,9 @@ async def test_run_bot_listener_409_conflict_handling() -> None:
             calls += 1
             return httpx.Response(409, text='{"ok":false,"error_code":409,"description":"Conflict"}')
 
+        async def post(self, url, json=None, files=None, data=None, timeout=None):
+            return httpx.Response(200, json={"ok": True, "result": True})
+
     mock_sleep = AsyncMock()
     with patch("gcc_job_radar.bot_listener.httpx.AsyncClient", return_value=MockAsyncClient()):
         from gcc_job_radar.bot_listener import run_bot_listener
@@ -809,6 +812,37 @@ async def test_run_bot_listener_409_conflict_handling() -> None:
             sleep_func=mock_sleep,
         )
         mock_sleep.assert_called_with(5)
+
+
+@pytest.mark.asyncio
+async def test_sync_telegram_bot_commands() -> None:
+    """Verify sync_telegram_bot_commands sends correct payload to setMyCommands."""
+    captured_payload = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal captured_payload
+        if "setMyCommands" in str(request.url):
+            captured_payload = json.loads(request.content.decode("utf-8"))
+            return httpx.Response(200, json={"ok": True, "result": True})
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        from gcc_job_radar.bot_listener import sync_telegram_bot_commands
+        ok = await sync_telegram_bot_commands(bot_token="test_token", client=client)
+        assert ok is True
+        assert captured_payload is not None
+        cmds = captured_payload.get("commands", [])
+        assert len(cmds) == 8
+        cmd_names = [c["command"] for c in cmds]
+        assert "scan" in cmd_names
+        assert "latest" in cmd_names
+        assert "email" in cmd_names
+        assert "tailor" in cmd_names
+        assert "applied" in cmd_names
+        assert "followups" in cmd_names
+        assert "stats" in cmd_names
+        assert "help" in cmd_names
+
 
 
 

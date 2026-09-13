@@ -373,3 +373,36 @@ def test_shared_client_limits_and_timeout() -> None:
     assert DEFAULT_TIMEOUT.read == 2.0
     assert DEFAULT_TIMEOUT.connect == 1.0
     assert DEFAULT_CONCURRENCY == 50
+
+
+@pytest.mark.asyncio
+async def test_probe_batch_ats_candidate() -> None:
+    """Verify probe_batch probe_ats_candidate properly constructs JobPosting and identifies matches."""
+    from tools.probe_batch import probe_ats_candidate
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "boards-api.greenhouse.io" in str(request.url):
+            return httpx.Response(
+                200,
+                json={
+                    "jobs": [
+                        {"id": 101, "title": "Software Engineer I", "location": {"name": "Bangalore"}, "absolute_url": "https://boards.greenhouse.io/test/101"},
+                        {"id": 102, "title": "Senior Director", "location": {"name": "Remote"}, "absolute_url": "https://boards.greenhouse.io/test/102"},
+                    ]
+                },
+            )
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        res = await probe_ats_candidate(client, "TestCorp", "testcorp")
+        assert res is not None
+        prov, slug, matches, total = res
+        assert prov == ATSProvider.GREENHOUSE
+        assert slug == "testcorp"
+        assert total == 2
+        assert len(matches) == 1
+        assert matches[0].title == "Software Engineer I"
+        assert matches[0].company == "TestCorp"
+        assert matches[0].provider == ATSProvider.GREENHOUSE
+        assert str(matches[0].apply_url) == "https://boards.greenhouse.io/test/101"
+

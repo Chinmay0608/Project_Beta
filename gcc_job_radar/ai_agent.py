@@ -31,6 +31,7 @@ from gcc_job_radar.db import (
     mark_job_status,
     query_jobs,
     record_jobs,
+    record_manual_job,
 )
 from gcc_job_radar.link_resolver import resolve_effective_apply_url
 from gcc_job_radar.scanner import scan_all_companies
@@ -484,6 +485,92 @@ def get_configured_companies(
     ]
 
 
+def parse_apply_target(text: str) -> tuple[str, str, Optional[str]]:
+    """Parse company name, job title, and optional notes from natural language apply queries.
+
+    Examples:
+        "flam applied" -> ("Flam", "Software Engineer", None)
+        "i mean i applies to flam software engineering intern opening so mark it as aoplies"
+            -> ("Flam", "Software Engineering Intern", None)
+        "mark Google as applied -n Referral from Alice"
+            -> ("Google", "Software Engineer", "Referral from Alice")
+        "software engineering intern at flam"
+            -> ("Flam", "Software Engineering Intern", None)
+    """
+    s = text.strip()
+    notes = None
+    m_note = re.search(r"(?:-n|--notes|notes?:)\s+(.+)$", s, flags=re.IGNORECASE)
+    if m_note:
+        notes = m_note.group(1).strip().strip('"\'')
+        s = s[: m_note.start()].strip()
+
+    s = re.sub(
+        r"^(?:i\s+mean\s+)?(?:i\s+)?(?:have\s+|already\s+)?(?:applied|applies|apply)\s+(?:to\s+|for\s+)?",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
+    s = re.sub(r"^mark(?:ed)?\s+", "", s, flags=re.IGNORECASE)
+
+    s = re.sub(
+        r"\s+so\s+mark\s+(?:it\s+)?(?:as\s+)?(?:applied|aoplies|apply).*$",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
+    s = re.sub(r"\s+as\s+(?:applied|aoplies|apply)$", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s+(?:applied|applies|aoplies)$", "", s, flags=re.IGNORECASE)
+    s = re.sub(
+        r"\s+(?:opening|openings|role|roles|job|jobs|position|positions)$",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
+    s = s.strip()
+
+    m_at = re.match(r"^(.+?)\s+(?:at|in|@)\s+(.+)$", s, flags=re.IGNORECASE)
+    if m_at:
+        title = m_at.group(1).strip().title()
+        comp = m_at.group(2).strip().title()
+        return comp, title, notes
+
+    title_keywords = (
+        r"(?:software\s+engineering\s+intern(?:ship)?|"
+        r"software\s+engineer(?:ing)?|"
+        r"software\s+developer|"
+        r"software\s+intern(?:ship)?|"
+        r"software|"
+        r"intern(?:ship)?|"
+        r"engineer(?:ing)?|"
+        r"developer|"
+        r"analyst|"
+        r"sde|"
+        r"swe|"
+        r"frontend|"
+        r"backend|"
+        r"fullstack|"
+        r"full\s+stack|"
+        r"data|"
+        r"consultant|"
+        r"trainee|"
+        r"graduate|"
+        r"associate|"
+        r"qa|"
+        r"devops|"
+        r"cloud|"
+        r"security)"
+    )
+    m_split = re.search(r"\b(" + title_keywords + r".*)$", s, flags=re.IGNORECASE)
+    if m_split and m_split.start() > 0:
+        comp = s[: m_split.start()].strip().title()
+        title = s[m_split.start() :].strip().title()
+        return comp, title, notes
+
+    comp = s.title()
+    title = "Software Engineer"
+    return comp, title, notes
+
+
 async def execute_tool(
     name: str, args: dict[str, Any], db_path: Optional[Path] = None
 ) -> dict[str, Any]:
@@ -669,6 +756,42 @@ async def execute_tool(
 
         jobs = find_jobs_by_selector(target, db_path=db_path)
         if not jobs:
+            clean_sel = re.sub(r"^#", "", target).strip()
+            is_numeric = clean_sel.isdigit() or (
+                clean_sel
+                and all(t.isdigit() for t in re.split(r"[,;\s]+", clean_sel) if t)
+            )
+            if action == "apply" and not is_numeric:
+                comp, tit, parsed_notes = parse_apply_target(target)
+                eff_notes = notes or parsed_notes
+                adhoc_job = record_manual_job(
+                    company=comp,
+                    title=tit,
+                    status="APPLIED",
+                    notes=eff_notes,
+                    db_path=db_path,
+                )
+                if adhoc_job:
+                    rowid = adhoc_job.get("numeric_id") or adhoc_job.get("id")
+                    eff_url, _, _ = resolve_effective_apply_url(adhoc_job)
+                    return {
+                        "status": "success",
+                        "action": action,
+                        "target_status": "APPLIED",
+                        "count": 1,
+                        "jobs": [
+                            {
+                                "id": rowid,
+                                "company": adhoc_job.get("company", comp),
+                                "title": adhoc_job.get("title", tit),
+                                "status": "APPLIED",
+                                "apply_url": eff_url or str(adhoc_job.get("apply_url") or ""),
+                            }
+                        ],
+                        "notes": eff_notes,
+                        "is_adhoc": True,
+                    }
+
             return {
                 "status": "not_found",
                 "action": action,
@@ -1436,22 +1559,32 @@ async def _fallback_response(
     if m_mark:
         action_match = "apply"
         target_match = query[m_mark.start(1) : m_mark.end(1)].strip()
+    elif re.search(r"\b(?:applied|aoplies|applies)(?:\s+opening)?(?:\s+so\s+mark\s+.*)?$", q):
+        action_match = "apply"
+        clean_target = re.sub(r"\s+so\s+mark\s+.*$", "", query, flags=re.IGNORECASE)
+        clean_target = re.sub(r"\s+(?:applied|aoplies|applies)(?:\s+opening)?$", "", clean_target, flags=re.IGNORECASE)
+        target_match = clean_target.strip()
     else:
-        for verb, act in [
-            ("applied to", "apply"),
-            ("apply to", "apply"),
-            ("mark applied", "apply"),
-            ("applied", "apply"),
-            ("apply", "apply"),
-            ("dismiss", "dismiss"),
-            ("hide", "dismiss"),
-            ("restore", "restore"),
-            ("undismiss", "restore"),
-        ]:
-            if q.startswith(verb + " "):
-                action_match = act
-                target_match = query[len(verb) :].strip()
-                break
+        m_lead = re.match(r"^(?:i\s+mean\s+)?(?:i\s+)?(?:have\s+|already\s+)?(?:applied|applies|apply)\s+(?:to\s+|for\s+)?", q)
+        if m_lead and m_lead.end() < len(q):
+            action_match = "apply"
+            target_match = query[m_lead.end() :].strip()
+        else:
+            for verb, act in [
+                ("applied to", "apply"),
+                ("apply to", "apply"),
+                ("mark applied", "apply"),
+                ("applied", "apply"),
+                ("apply", "apply"),
+                ("dismiss", "dismiss"),
+                ("hide", "dismiss"),
+                ("restore", "restore"),
+                ("undismiss", "restore"),
+            ]:
+                if q.startswith(verb + " "):
+                    action_match = act
+                    target_match = query[len(verb) :].strip()
+                    break
 
     if action_match and target_match:
         notes = None

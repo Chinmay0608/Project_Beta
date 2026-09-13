@@ -429,3 +429,116 @@ async def test_ai_agent_fallback_applied_intents(
     )
     assert "Your Applied Listings (2)" in res_list
 
+
+def test_parse_apply_target() -> None:
+    """Verify parse_apply_target accurately parses company, title, and notes."""
+    from gcc_job_radar.ai_agent import parse_apply_target
+
+    # 1. Simple "<company> applied"
+    c, t, n = parse_apply_target("flam applied")
+    assert c == "Flam"
+    assert t == "Software Engineer"
+    assert n is None
+
+    # 2. Complex conversational with typos and role specification
+    c2, t2, n2 = parse_apply_target("i mean i applies to flam software engineering intern opening so mark it as aoplies")
+    assert c2 == "Flam"
+    assert "Software Engineering Intern" in t2
+    assert n2 is None
+
+    # 3. Title at Company
+    c3, t3, n3 = parse_apply_target("software engineering intern at flam")
+    assert c3 == "Flam"
+    assert t3 == "Software Engineering Intern"
+
+    # 4. Notes flag
+    c4, t4, n4 = parse_apply_target("Google applied -n Referral from Alice")
+    assert c4 == "Google"
+    assert n4 == "Referral from Alice"
+
+
+@pytest.mark.asyncio
+async def test_handle_command_apply_adhoc_missing_job(test_db_with_jobs: Path) -> None:
+    """Verify /apply auto-records ad-hoc application when job is not in DB."""
+    replies = []
+
+    async def mock_send_reply(token, cid, text, client):
+        replies.append(text)
+
+    async with httpx.AsyncClient() as client:
+        with patch("gcc_job_radar.bot_listener.send_telegram_reply", side_effect=mock_send_reply):
+            # Apply to Flam (not previously in database)
+            await handle_command(
+                command_text="/apply Flam Software Engineering Intern -n Applied via LinkedIn",
+                chat_id="12345",
+                bot_token="test_token",
+                allowed_chat_id="12345",
+                client=client,
+                db_path=test_db_with_jobs,
+            )
+
+    assert len(replies) == 1
+    assert "Marked as APPLIED (1)" in replies[0]
+    assert "Flam" in replies[0]
+    assert "Software Engineering Intern" in replies[0]
+    assert "Applied via LinkedIn" in replies[0]
+
+    # Verify job is recorded in database
+    flam_jobs = find_jobs_by_selector("Flam", db_path=test_db_with_jobs)
+    assert len(flam_jobs) == 1
+    assert flam_jobs[0]["company"] == "Flam"
+    assert flam_jobs[0]["status"] == "APPLIED"
+
+
+@pytest.mark.asyncio
+async def test_ai_agent_fallback_trailing_apply(
+    test_db_with_jobs: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify natural language 'flam applied' marks/records application via fallback."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    res = await ask_ai_agent(
+        "flam applied",
+        chat_id="chat-test-flam",
+        db_path=test_db_with_jobs,
+    )
+    assert "Marked as APPLIED" in res
+    assert "Flam" in res
+
+
+@pytest.mark.asyncio
+async def test_handle_command_scan_new(test_db_with_jobs: Path) -> None:
+    """Verify /scan new scans only the newly added companies."""
+    replies = []
+
+    async def mock_send_reply(token, cid, text, client):
+        replies.append(text)
+
+    mock_scan_called_with = []
+
+    async def mock_scan(companies):
+        mock_scan_called_with.append(companies)
+        return []
+
+    async with httpx.AsyncClient() as client:
+        with patch("gcc_job_radar.bot_listener.send_telegram_reply", side_effect=mock_send_reply), \
+             patch("gcc_job_radar.bot_listener.scan_all_companies", side_effect=mock_scan):
+
+            # Test /scan new 10
+            await handle_command(
+                command_text="/scan new 10",
+                chat_id="12345",
+                bot_token="test_token",
+                allowed_chat_id="12345",
+                client=client,
+                db_path=test_db_with_jobs,
+            )
+
+    assert len(mock_scan_called_with) == 1
+    assert len(mock_scan_called_with[0]) == 10
+    assert any("the last <b>10</b> newly added companies" in r for r in replies)
+
+

@@ -1,88 +1,573 @@
+Zoho
+Zerodha
+Postman
+BrowserStack
+Razorpay
+Groww
+CRED
+Meesho
+Udaan
+Dream11
+PhonePe
+BharatPe
+Paytm
+Freshworks
+Chargebee
+Druva
+InMobi
+Glance
+Unacademy
+Physics Wallah
+upGrad
+BYJU’S
+Vedantu
+Ather Energy
+Ola Electric
+Rapido
+Lenskart
+Nykaa
+Policybazaar
+Cars24
+Spinny
+Delhivery
+BlackBuck
+OfBusiness
+Moglix
+Infra.Market
+Zetwerk
+ElasticRun
+Apna
+Khatabook
+MobiKwik
+Pine Labs
+Juspay
+Open Financial Technologies
+Perfios
+M2P Fintech
+KreditBee
+Navi Technologies
+CoinSwitch
+CoinDCX
+Hasura
+SigTuple
+Uniphore
+Mad Street Den
+Observe.AI
+Yellow.ai
+Scaler
+Darwinbox
+Whatfix
+MoEngage
+Netcore Cloud
+Gupshup
+Exotel
+LeadSquared
+MindTickle
+HighRadius
+BrowserStack India
+Wingify
+Fynd
+RateGain
+Increff
+Capillary Technologies
+Unbxd
+CloudCherry
+Kissflow
+GreytHR
+Keka
+SurveySparrow
+Vymo
+SirionLabs
+Tally Solutions
+Newgen Software
+Netradyne
+Detect Technologies
+TrueFoundry
+Facets.cloud
+Whatfix Labs
+Entropik
+HyperVerge
+DataWeave
+Yellow.ai Labs
+Haptik
+CoRover
+Gnani.ai
+Arya.ai
+Qure.ai
+Niramai
+Dozee
+SigTuple Health
+AgNext
+Sarvam AI
+Krutrim
+Neysa
+CoRover AI
+Skit.ai
+Unlearn
+Pixxel
+Agnikul Cosmos
+Skyroot Aerospace
+Dhruva Space
+Bellatrix Aerospace
+Digantara
+SatSure
+PierSight
+GalaxEye
+Astrome Technologies
+Asteria Aerospace
+ideaForge
+Tonbo Imaging
+BotLab Dynamics
+Raphe mPhibr
+NewSpace India
+Skyroot Technologies
+Space Machines Company
+Agnikul Technologies
+Exponent Energy
+Ultraviolette Automotive
+River
+Oben Electric
+Matter Motor Works
+Simple Energy
+Tork Motors
+Bounce Infinity
+Altigreen
+Euler Motors
+Zypp Electric
+Sun Mobility
+BluSmart
+Battery Smart
+Log9 Materials
+Carbon Clean
+GPS Renewables
+ReNew
+Fourth Partner Energy
+Amplus Energy
+CleanMax
+Husk Power Systems
+Newtrace
+String Bio
+Sea6 Energy
+DeHaat
+Fasal
+nurture.farm
+Bijak
+Captain Fresh
+WayCool
+Arya.ag
+Ecozen
+Stellapps
+CropIn
+Acko
+Digit Insurance
+Even Healthcare
+InsuranceDekho
+Navi General Insurance
+Plum
+Turtlemint
+Onsurity
+BeatO
+HealthifyMe
+HealthPlix
+HexaHealth
+Practo
+Tata 1mg
+PharmEasy
+Medibuddy
+Mfine
+Orange Health Labs
+Redcliffe Labs
+Cure.fit
+Curefoods
+Sugar.fit
+Ultrahuman
+Wysa
+YourDOST
+ZenOnco
+Qure.ai Health
+Forus Health
+Molbio Diagnostics
+MedGenome
+Bugworks Research
+Eyestem
+Noccarc
+Tricog Health
+CareStack
+CrelioHealth
+Doctolib India
+Karkinos Healthcare
+Genrobotics
+Jana Care
+BrightChamps
+Classplus
+Cuemath
+Doubtnut
+Embibe
+Filo
+FrontRow
+Great Learning
+Imarticus Learning
+LEAD School
+Newton School
+NxtWave
+Teachmint
+Testbook
+Toppr
+Unstop
+Camp K12
+Scaler School of Technology
+Sunstone
+TrainerCentral
+Vidyakul
+EduBridge
+Classplus Labs
+Simplilearn
+Adda247
+Physics Wallah Labs
+Coding Ninjas
+Masai School
+KnowledgeHut
+TalentSprint
+Abridge
+Adept AI
+Anthropic
+Anyscale
+Applied Intuition
+AssemblyAI
+Baseten
+Character AI
+Cerebras Systems
+Cohere
+Covariant
+Crusoe
+ElevenLabs
+Figure AI
+Firefly Aerospace
+Glean
+Harvey
+Hugging Face
+Insitro
+Luma AI
+Midjourney
+Mistral AI
+Modal
+OpenAI
+Perplexity AI
+Pinecone
+Replicate
+Runway
+Scale AI
+Shield AI
+Stability AI
+Suno
+Together AI
+Writer
+xAI
+Weights & Biases
+Character Technologies
+Magic AI
+Groq
+CoreWeave
+Lambda
+Runpod
+Vercel
+Supabase
+Retool
+Webflow
+Airtable
+Notion
+Linear
+Miro
+Calendly
+Loom
+Figma
+Canva
+ClickUp
+Monday.com
+Asana
+Smartsheet
+Docusign
+Okta
+Cloudflare
+Fastly
+HashiCorp
+Confluent
+Elastic
+MongoDB
+Cockroach Labs
+PlanetScale
+Neon
+Temporal
+Grafana Labs
+Sentry
+LaunchDarkly
+CircleCI
+GitLab
+PostHog
+Amplitude
+Mixpanel
+Braze
+Iterable
+Klaviyo
+Segment
+Samsara
+Aurora Innovation
+Nuro
+Zoox
+Rivian
+Lucid Motors
+Anduril Industries
+Relativity Space
+Astranis
+Databricks
+Snowflake
+Datadog
+New Relic
+Splunk
+Sumo Logic
+Dynatrace
+PagerDuty
+Rapid7
+Rubrik
+CrowdStrike
+SentinelOne
+Wiz
+Snyk
+Orca Security
+Arctic Wolf
+Abnormal Security
+Axonius
+BigID
+Coalition
+Cyera
+Drata
+Huntress
+Illumio
+IronNet
+Lacework
+OneTrust
+Palo Alto Networks
+Zscaler
+Brex
+Ramp
+Mercury
+Plaid
+Chime
+Marqeta
+Affirm
+Toast
+Gusto
+Rippling
+Deel
+Remote
+Oyster
+Wise
+Revolut
+Klarna
+Mollie
+Checkout.com
+SumUp
+N26
+Trade Republic
+Celonis
+Personio
+Contentful
+Pitch
+Mambu
+Pleo
+Aircall
+Back Market
+Doctolib
+Qonto
+Alan
+Sorare
+Vinted
+Bolt
+Glovo
+GetYourGuide
+DeepL
+Aleph Alpha
+Helsing
+Darktrace
+Criteo
+BlaBlaCar
+Northvolt
+Spotify
+TrueLayer
+Tractable
+Graphcore
+Improbable
+WiseTech Global
+Airwallex
+Culture Amp
+Canva Australia
+Employment Hero
+Immutable
+Linktree
+MYOB
+Nearmap
+Nuix
+SiteMinder
+TechnologyOne
+Tyro Payments
+Zip Co
+Afterpay
+Atlassian
+ThoughtWorks
+Appen
+Freelancer.com
+Xero
+Carousell
+Grab
+Gojek
+Kakao
+Meituan
+Naver Cloud
+Rakuten
+Sea Group
+Shopee
+Tokopedia
+Traveloka
+Xendit
+Zalo
+Carsome
+Ninja Van
+PropertyGuru
+Seek
+WiseTech Global Labs
+GCash
+Maya
+Bukalapak
+Ruangguru
+Kredivo
+Akulaku
+PatSnap
+NCS Group
+Alibaba Cloud
+Ant Group
+Baidu
+ByteDance
+Coupang
+Didi Global
+LINE
+Lazada
+OYO Technology
+Jio Platforms
+Trusting Social
+Ula
+VNG Corporation
+Yanolja
+Yassir
+Fano Labs
+Razer
+SoftBank Robotics
+Sky Mavis
+StoreHub
+Tiki
+Spenmo
+M-DAQ
+Flash Coffee
+Foodpanda
+Lalamove
+OVO
+Dana
+GoTo Financial
+Bukalapak Mitra
+Carro
+Endowus
+Funding Societies
+Aspire
+Nium
+StashAway
+Syfe
+Validus
+Coda Payments
+Partior
+FinAccel
+Kredivo Holdings
+Fave
+BigPay
+Julo
+Akulaku Finance
+Pluang
+Bibit
+Xfers
+Coins.ph
+PayMongo
+Mynt
+Atome
+Advance.AI
+Credolab
+10x Banking
+11x
+1Password
+1MRobotics
+3YOURMIND
+6sense
+8fig
+10Pearls
+24i
+51Talk
+58.com
+99 Group
+1047 Games
 A10 Networks
 Abacus.AI
-Abnormal Security
 Acceldata
-Accurics
 Acrolinx
-Adarga
 Addepar
 Adverity
-Aembit
+Aera Technology
 Aerospike
 Agiloft
-Agorai
-Aiven
-Akamai Labs
-Akur8
+Akamai
 Alation
-Aleo
-Allganize
-Alloy Automation
+Alloy
 AlphaSense
 Altair
 Ambarella
-Ambient.ai
 Anaconda
-AngelList
 Anrok
-Ansys
-Anthropic Labs
 Appcues
 AppDynamics
-AppDirect
-Appian Labs
 AppOmni
 Appsmith
-Ardoq
+ArangoDB
 Armis
 Arrive Logistics
 Articulate
-Asana Labs
-Ascend.io
 Ashby
 Atera
-Attentive Mobile
+Attentive
 AuditBoard
 Augury
-Aurora Solar
 Auth0
 Automox
-Axonius
-Axiom Cloud
 BallerTV
-Baseten
 Beamery
 Beekeeper
 BigCommerce
-BigID
+BigPanda
 Biofourmis
 BioRender
 Bitmovin
 Bitwarden
-Blackbird
 BlackLine
 Blameless
 Blend
-BlockFi
+Blockdaemon
 BlueVoyant
-Bolt Financial
 Booksy
 Bowery Farming
-Braze Labs
 Branch
 Brandwatch
 Brightwheel
 Brinqa
-Bristlecone
 Buildkite
 Built Robotics
 Bullhorn
-Busuu
 Butterfly Network
 C3 AI
-Caddi
-Calix
-Cambly
 Candid Health
 Canary Technologies
 CaptivateIQ
@@ -93,29 +578,23 @@ Cart.com
 Castor
 Catalant
 Cedar
-Centrical
-Cerebral
 Chainalysis
 Chariot
 Checkmarx
 Chronosphere
 ChurnZero
-Cinder
-CircleCI Labs
 Clari
 Claroty
 Cleanlab
 Clearbit
 Clio
-Cloudera Labs
-Cloudflare Workers
+CloudBees
 Cloudinary
 Cloudsmith
 CloudZero
 Code42
 Codefresh
 Codeium
-CodeSignal
 Codility
 Coda
 Coherent
@@ -123,19 +602,12 @@ Collibra
 Color Health
 Column
 CommerceIQ
-Commvault
-Compass
 ComplyAdvantage
-Compose
-Conductor
-Confluent Labs
 Connecteam
-Contentful
 Contentstack
 Convex
 Copper CRM
 Corelight
-Cority
 Cortex
 Couchbase
 Coveo
@@ -143,69 +615,45 @@ Craft.co
 Cradle
 Cribl
 Crossbeam
-CrowdStrike Labs
-Curai Health
 Customer.io
 CustomerSuccessBox
 Cyara
 CyberArk
-Cyera
 Dagger
 Daloopa
 DataCamp
-Dataiku
-Dataiku Labs
+Datafold
 Dataminr
 DataStax
-Datafold
-Dataiku India
-DataRobot
-Dataiku Ventures
 Datavant
 dbt Labs
 Decagon
 Deepwatch
 Deliverect
 Demandbase
-Dentsu Digital
 Dext
-Dgraph
 Dialpad
-DigitalOcean
 Diligent
 DispatchHealth
 DispatchTrack
 Dixa
 DocPlanner
-Docker Labs
-Docusign Labs
+Docker
 DoiT International
 Domo
 Doppler
 Dott
 Dremio
 DroneDeploy
-Drata
 Drift
-Druva
-Duolingo Labs
-Dynatrace
 E2open
 Earnix
 Earthmover
 EasyPost
 Elastic Path
 Elementl
-ElevenLabs
-Elinvar
 Emburse
 Encord
-Endor Labs
-EnergyHub
-Engagio
-Enigma
-Enigma Securities
-Enigma Technologies
 Envoy
 Enveda Biosciences
 EquipmentShare
@@ -239,14 +687,12 @@ Forter
 Foxglove
 Fractal Analytics
 Freightos
-FreightWaves
 Freshpaint
 Front
 FullStory
 Fundbox
 Funding Circle
 G2
-Ganymede Bio
 Gatik
 Gather
 Gem
@@ -254,19 +700,12 @@ GenePeeks
 Genies
 Genoox
 Getaround
-GetYourGuide
 Ginkgo Bioworks
-Glean
 Glia
-Glovo
-GoCardless
 Go1
-GoKwik
 Gong
 GoodRx
-Grafana Labs
 Grammarly
-Grand Rounds
 Gravie
 Greenhouse Software
 Gremlin
@@ -275,22 +714,16 @@ GrubMarket
 Guardant Health
 Guild Education
 GumGum
-H2O.ai
 HackerOne
 Hadrian
 Halcyon
 Handshake
 Harness
-HashiCorp
 Hazy
 Headspace
 Heap
-Helix
-Helsing
-HighRadius
 Highspot
 Hightouch
-Hive
 HiveMQ
 Holidu
 HoneyBook
@@ -299,31 +732,21 @@ Hopin
 Hopsworks
 Hotjar
 Humanloop
-Humane
-Huntress
 HyperionDev
 Hyperscience
 Icertis
-Illumio
 Immuta
 Imply
 Incode
 Incorta
-Index Ventures
-Inflection AI
 InfluxData
-Ingenico Digital
-Insider
-Insilico Medicine
 Instabase
 Instawork
 Intercom
 Interos
 Intrinsic
 Ironclad
-IronNet
 iRhythm
-Iterable
 Jackpocket
 JFrog
 Jobber
@@ -334,45 +757,33 @@ Karat
 Katana Cloud Inventory
 Katalon
 Keeper Security
-Kforce Digital
 K Health
 Kinetic
 Kin Insurance
 Kinsta
-Klarna
-Klaviyo
 Klook
 Komoot
 Kong
-Konstrukt
 Koho
 Kustomer
-Kyndryl Labs
 Lattice
-LaunchDarkly
 LayerZero
-LeadSquared
 Lemonade
 Lendable
-LendingTree
 Lessen
 Lightmatter
 Lightspeed Commerce
 Lime
-Linear
 Lingoda
-Linktree
 Lithic
 LiveRamp
 Livongo
 Lokalise
-Loom
 Loop Returns
 Lucid Software
 Luminar
 Lusha
 Lyra Health
-Mambu
 Mavrck
 Maxar
 Medallia
@@ -380,14 +791,10 @@ Medable
 Medallion
 Meilisearch
 Memfault
-Mercado Libre
 Merama
-Mercury
 Metabase
 Mews
 M-Files
-Miro
-Mixpanel
 Modern Treasury
 Modulate
 Mogul
@@ -395,46 +802,32 @@ Moloco
 Monte Carlo Data
 MoonPay
 Motive
-Motional
 Mux
 MyCase
 MyFitnessPal
-N26
-Natera Digital
 Navan
 Near Protocol
 Neo4j
-Neon
 NerdWallet
 Nexthink
 Next Insurance
-Nium
 Noibu
-Notion Labs
-Nuro
-Nuvei
 Nylas
 Ocado Technology
 Octopus Energy
 Oklo
 Omada Health
-OneTrust
 Onfido
 OpenGov
 OpenPhone
-Opendoor
 OpenSea
 Optimizely
-Orca Security
 Oscar Health
 OutSystems
-Oyster
 Oura
 Outreach
 Overhaul
 Owner.com
-PagarBook
-PagerDuty
 Papaya Global
 Paradox
 Parallel
@@ -447,25 +840,19 @@ PayFit
 Pear Therapeutics
 Peloton
 Persona
-Personio
 Petuum
 Phenom
 Photoroom
 Pindrop
 Pipe
 Pipedrive
-Pitch
-PlanetScale
-Plaid
 Plenty
-Pleo
 Pluralsight
 PocketLaw
 Podium
 PointClickCare
 Policygenius
 PolyAI
-PostHog
 Preply
 Primer
 Printful
@@ -474,15 +861,12 @@ Procore
 Proton
 Provenance
 Pryon
-Pulse Biosciences
-Qonto
 Qualtrics
 Quantum Machines
 QuantumScape
 QuEra Computing
 Quince
 Quora
-Ramp
 Rapyd
 Recharge
 Rec Room
@@ -491,33 +875,23 @@ Redpanda
 Redis
 Redox
 Reforge
-Relativity Space
 Remitly
 Render
 Replit
-Retool
 Rev.com
-Revolut
 Rho
-Rippling
 Riskified
 Robinhood
 Rocket Lab
 Rockset
 Ro
 Roadie
-Rubrik
 Runa
-Runway
 Salsify
-Samsara
 Sanity
-Scale AI
-Scaler
 Scandit
 Scout Motors
 Scribd
-Sentry
 ServiceTitan
 ShipBob
 Shippo
@@ -528,11 +902,9 @@ Similarweb
 Sisense
 Skydio
 Skyflow
-Snyk
 Socure
 SolarWinds
 SonarSource
-Sorare
 Sourcegraph
 SparkCognition
 Speak
@@ -545,3 +917,42 @@ Starry
 Stash
 SteelSeries
 Superhuman
+SurveyMonkey
+Sword Health
+Synthesia
+Sysdig
+Tailscale
+Tala
+Talkdesk
+Tanium
+Tartan
+TaskRabbit
+Teal
+TeamViewer
+Terraformation
+The Farmer’s Dog
+The Trade Desk
+ThoughtSpot
+ThousandEyes
+Thumbtack
+Tidio
+TigerGraph
+Tines
+Tonkean
+Top Hat
+Transcarent
+TravelPerk
+Tremendous
+Trulioo
+Typeform
+Udacity
+Ujet
+Unqork
+UpKeep
+UserTesting
+Vanta
+Veeam
+Veo Technologies
+Veriff
+Verkada
+Zapier

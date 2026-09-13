@@ -70,9 +70,9 @@ async def probe_ats_candidate(
     client: httpx.AsyncClient,
     company_name: str,
     slug: str,
-) -> Optional[tuple[str, str, list[JobPosting]]]:
+) -> Optional[tuple[ATSProvider, str, list[JobPosting], int]]:
     """Probe Ashby, Greenhouse, Lever, SmartRecruiters for the candidate slug.
-    Returns (provider, slug, matching_jobs) if active and has target entry-level roles.
+    Returns (provider, slug, matching_jobs, total_jobs) if active job board is found.
     """
     # 1. Ashby
     try:
@@ -80,21 +80,23 @@ async def probe_ats_candidate(
         if r.status_code == 200:
             data = r.json()
             jobs = data.get("jobs", [])
-            matches = []
-            for j in jobs:
-                title = j.get("title", "")
-                if matches_target_title(title):
-                    matches.append(
-                        JobPosting(
-                            company_name=company_name,
-                            title=title,
-                            location=j.get("location", ""),
-                            apply_url=j.get("jobUrl", ""),
-                            ats_provider=ATSProvider.ASHBY,
-                            job_id=str(j.get("id", "")),
+            if isinstance(jobs, list) and len(jobs) > 0:
+                matches = []
+                for j in jobs:
+                    title = j.get("title", "")
+                    if matches_target_title(title):
+                        job_url = j.get("jobUrl") or f"https://jobs.ashbyhq.com/{slug}"
+                        matches.append(
+                            JobPosting(
+                                id=str(j.get("id", "")) or f"ashby_{slug}_{len(matches)}",
+                                company=company_name,
+                                title=title,
+                                location=j.get("location", "") or "Remote",
+                                apply_url=job_url,
+                                provider=ATSProvider.ASHBY,
+                            )
                         )
-                    )
-            return ("ashby", slug, matches)
+                return (ATSProvider.ASHBY, slug, matches, len(jobs))
     except Exception:
         pass
 
@@ -104,21 +106,25 @@ async def probe_ats_candidate(
         if r.status_code == 200:
             data = r.json()
             jobs = data.get("jobs", [])
-            matches = []
-            for j in jobs:
-                title = j.get("title", "")
-                if matches_target_title(title):
-                    matches.append(
-                        JobPosting(
-                            company_name=company_name,
-                            title=title,
-                            location=j.get("location", {}).get("name", ""),
-                            apply_url=j.get("absolute_url", ""),
-                            ats_provider=ATSProvider.GREENHOUSE,
-                            job_id=str(j.get("id", "")),
+            if isinstance(jobs, list) and len(jobs) > 0:
+                matches = []
+                for j in jobs:
+                    title = j.get("title", "")
+                    if matches_target_title(title):
+                        loc_obj = j.get("location")
+                        loc_name = loc_obj.get("name", "") if isinstance(loc_obj, dict) else str(loc_obj or "")
+                        apply_url = j.get("absolute_url") or f"https://boards.greenhouse.io/{slug}"
+                        matches.append(
+                            JobPosting(
+                                id=str(j.get("id", "")) or f"gh_{slug}_{len(matches)}",
+                                company=company_name,
+                                title=title,
+                                location=loc_name or "India",
+                                apply_url=apply_url,
+                                provider=ATSProvider.GREENHOUSE,
+                            )
                         )
-                    )
-            return ("greenhouse", slug, matches)
+                return (ATSProvider.GREENHOUSE, slug, matches, len(jobs))
     except Exception:
         pass
 
@@ -127,22 +133,25 @@ async def probe_ats_candidate(
         r = await client.get(f"https://api.lever.co/v0/postings/{slug}?mode=json")
         if r.status_code == 200:
             data = r.json()
-            if isinstance(data, list):
+            if isinstance(data, list) and len(data) > 0:
                 matches = []
                 for j in data:
                     title = j.get("text", "")
                     if matches_target_title(title):
+                        cats = j.get("categories")
+                        loc = cats.get("location", "") if isinstance(cats, dict) else ""
+                        apply_url = j.get("hostedUrl") or f"https://jobs.lever.co/{slug}"
                         matches.append(
                             JobPosting(
-                                company_name=company_name,
+                                id=str(j.get("id", "")) or f"lever_{slug}_{len(matches)}",
+                                company=company_name,
                                 title=title,
-                                location=j.get("categories", {}).get("location", ""),
-                                apply_url=j.get("hostedUrl", ""),
-                                ats_provider=ATSProvider.LEVER,
-                                job_id=str(j.get("id", "")),
+                                location=loc or "India",
+                                apply_url=apply_url,
+                                provider=ATSProvider.LEVER,
                             )
                         )
-                return ("lever", slug, matches)
+                return (ATSProvider.LEVER, slug, matches, len(data))
     except Exception:
         pass
 
@@ -152,21 +161,26 @@ async def probe_ats_candidate(
         if r.status_code == 200:
             data = r.json()
             content = data.get("content", [])
-            matches = []
-            for j in content:
-                title = j.get("name", "")
-                if matches_target_title(title):
-                    matches.append(
-                        JobPosting(
-                            company_name=company_name,
-                            title=title,
-                            location=j.get("location", {}).get("city", ""),
-                            apply_url=f"https://jobs.smartrecruiters.com/{slug}/{j.get('id', '')}",
-                            ats_provider=ATSProvider.SMARTRECRUITERS,
-                            job_id=str(j.get("id", "")),
+            if isinstance(content, list) and len(content) > 0:
+                matches = []
+                for j in content:
+                    title = j.get("name", "")
+                    if matches_target_title(title):
+                        loc_obj = j.get("location")
+                        loc = loc_obj.get("city", "") if isinstance(loc_obj, dict) else ""
+                        jid = str(j.get("id", ""))
+                        apply_url = f"https://jobs.smartrecruiters.com/{slug}/{jid}" if jid else f"https://jobs.smartrecruiters.com/{slug}"
+                        matches.append(
+                            JobPosting(
+                                id=jid or f"sr_{slug}_{len(matches)}",
+                                company=company_name,
+                                title=title,
+                                location=loc or "India",
+                                apply_url=apply_url,
+                                provider=ATSProvider.SMARTRECRUITERS,
+                            )
                         )
-                    )
-            return ("smartrecruiters", slug, matches)
+                return (ATSProvider.SMARTRECRUITERS, slug, matches, len(content))
     except Exception:
         pass
 
@@ -219,23 +233,15 @@ async def process_company(
                 continue
             ats_res = await probe_ats_candidate(client, comp, s)
             if ats_res:
-                prov, slug, matching_jobs = ats_res
-                if matching_jobs:
-                    return {
-                        "company": comp,
-                        "status": "KEEP_ATS",
-                        "provider": prov,
-                        "token": slug,
-                        "jobs": matching_jobs,
-                    }
-                else:
-                    return {
-                        "company": comp,
-                        "status": "SKIP_ATS_IRRELEVANT",
-                        "provider": prov,
-                        "token": slug,
-                        "reason": "Board active but 0 entry-level tech roles match",
-                    }
+                prov, slug, matching_jobs, total_jobs = ats_res
+                return {
+                    "company": comp,
+                    "status": "KEEP_ATS",
+                    "provider": prov,
+                    "token": slug,
+                    "jobs": matching_jobs,
+                    "total_jobs": total_jobs,
+                }
 
         # Step 2: Probe Custom Career Page
         for s in slugs[:2]:
@@ -245,7 +251,7 @@ async def process_company(
                 return {
                     "company": comp,
                     "status": "KEEP_CUSTOM",
-                    "provider": "custom",
+                    "provider": ATSProvider.CUSTOM,
                     "career_url": career_url,
                     "jobs": matching_jobs,
                 }
@@ -333,9 +339,14 @@ async def main():
         elif status == "KEEP_ATS":
             kept_ats.append(r)
             all_verified_jobs.extend(r["jobs"])
-            print(f"  [+] KEPT ATS: {r['company']} ({r['provider']}:{r['token']}) -> {len(r['jobs'])} entry-level opening(s)")
-            for j in r["jobs"]:
-                print(f"      💼 {j.title} | {j.location} | {j.apply_url}")
+            prov_str = r['provider'].value if hasattr(r['provider'], 'value') else r['provider']
+            tot = r.get("total_jobs", len(r["jobs"]))
+            if r["jobs"]:
+                print(f"  [+] KEPT ATS: {r['company']} ({prov_str}:{r['token']}) -> {len(r['jobs'])} entry-level opening(s) (out of {tot} total)")
+                for j in r["jobs"]:
+                    print(f"      💼 {j.title} | {j.location} | {j.apply_url}")
+            else:
+                print(f"  [+] KEPT ATS: {r['company']} ({prov_str}:{r['token']}) -> Monitored ({tot} total open positions)")
         elif status == "KEEP_CUSTOM":
             kept_custom.append(r)
             all_verified_jobs.extend(r["jobs"])
@@ -348,7 +359,7 @@ async def main():
     print("=" * 70)
     print(f"Total Targets:             {len(companies)}")
     print(f"Already Monitored:         {already_count}")
-    print(f"Skipped (No entry roles):  {skipped_count}")
+    print(f"Skipped / Not Found:       {skipped_count}")
     print(f"Kept ATS Boards:           {len(kept_ats)}")
     print(f"Kept Custom Career Pages:  {len(kept_custom)}")
     print(f"Total Entry-Level Roles:   {len(all_verified_jobs)}")

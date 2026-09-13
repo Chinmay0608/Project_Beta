@@ -650,7 +650,12 @@ def record_jobs(jobs: list[JobPosting], db_path: Optional[Path] = None) -> None:
                         job.published_date or "Active",
                         1 if job.is_remote else 0,
                         getattr(job, "status", None) or "NEW",
-                        getattr(job, "applied_at", None),
+                        getattr(job, "applied_at", None)
+                        or (
+                            datetime.now(timezone.utc).isoformat()
+                            if getattr(job, "status", None) == "APPLIED"
+                            else None
+                        ),
                         getattr(job, "notes", None),
                         getattr(job, "direct_search_url", None),
                         job_score,
@@ -1053,6 +1058,140 @@ def mark_job_status(
 
         conn.commit()
         return cursor.rowcount > 0
+
+
+def record_manual_job(
+    company: str,
+    title: str = "Software Engineer",
+    location: str = "India",
+    status: str = "APPLIED",
+    notes: Optional[str] = None,
+    apply_url: Optional[str] = None,
+    db_path: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Record an ad-hoc or manually tracked job application/posting into seen_jobs.
+
+    If an existing record matches the company (and title), it updates its status,
+    applied timestamp, and notes. Otherwise, it inserts a new record with a unique
+    ID and returns the complete job record including numeric_id.
+    """
+    comp = str(company or "").strip()
+    if not comp:
+        raise ValueError("Company name must not be empty.")
+
+    tit = str(title or "").strip() or "Software Engineer"
+    loc = str(location or "").strip() or "India"
+    status_norm = str(status or "APPLIED").strip().upper()
+    if status_norm not in VALID_JOB_STATUSES:
+        status_norm = "APPLIED"
+
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+
+    if not apply_url:
+        from gcc_job_radar.link_resolver import build_direct_careers_redirect_url
+
+        apply_url = build_direct_careers_redirect_url(comp, tit)
+
+    clean_url = canonicalize_url(str(apply_url))
+    now_iso = datetime.now(timezone.utc).isoformat()
+    applied_at = now_iso if status_norm == "APPLIED" else None
+
+    # Slug for unique ID
+    comp_slug = re.sub(r"[^a-zA-Z0-9]+", "_", comp.lower()).strip("_") or "company"
+    import time
+
+    ts = int(time.time() * 1000)
+    manual_id = f"manual_{comp_slug}_{ts}"
+
+    with sqlite3.connect(target_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen_jobs'")
+        table_name = "seen_jobs" if cursor.fetchone() else "jobs"
+
+        # Check for existing job with matching company and title
+        cursor.execute(
+            f"""
+            SELECT rowid AS numeric_id, * FROM {table_name}
+            WHERE lower(trim(company)) = lower(trim(?))
+              AND (lower(trim(title)) = lower(trim(?)) OR lower(title) LIKE '%' || lower(?) || '%')
+            ORDER BY last_seen_at DESC LIMIT 1
+            """,
+            (comp, tit, tit),
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            target_rowid = existing["numeric_id"]
+            if status_norm == "APPLIED":
+                cursor.execute(
+                    f"UPDATE {table_name} SET status = ?, applied_at = COALESCE(applied_at, ?), notes = COALESCE(?, notes), last_seen_at = CURRENT_TIMESTAMP WHERE rowid = ?",
+                    (status_norm, now_iso, notes, target_rowid),
+                )
+            else:
+                cursor.execute(
+                    f"UPDATE {table_name} SET status = ?, notes = COALESCE(?, notes), last_seen_at = CURRENT_TIMESTAMP WHERE rowid = ?",
+                    (status_norm, notes, target_rowid),
+                )
+            conn.commit()
+            cursor.execute(f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE rowid = ?", (target_rowid,))
+            return dict(cursor.fetchone())
+
+        # Check by company alone if title is generic
+        cursor.execute(
+            f"""
+            SELECT rowid AS numeric_id, * FROM {table_name}
+            WHERE lower(trim(company)) = lower(trim(?))
+            ORDER BY last_seen_at DESC LIMIT 1
+            """,
+            (comp,),
+        )
+        existing_comp = cursor.fetchone()
+        if existing_comp and tit in ("Software Engineer", "Role", ""):
+            target_rowid = existing_comp["numeric_id"]
+            if status_norm == "APPLIED":
+                cursor.execute(
+                    f"UPDATE {table_name} SET status = ?, applied_at = COALESCE(applied_at, ?), notes = COALESCE(?, notes), last_seen_at = CURRENT_TIMESTAMP WHERE rowid = ?",
+                    (status_norm, now_iso, notes, target_rowid),
+                )
+            else:
+                cursor.execute(
+                    f"UPDATE {table_name} SET status = ?, notes = COALESCE(?, notes), last_seen_at = CURRENT_TIMESTAMP WHERE rowid = ?",
+                    (status_norm, notes, target_rowid),
+                )
+            conn.commit()
+            cursor.execute(f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE rowid = ?", (target_rowid,))
+            return dict(cursor.fetchone())
+
+        # Otherwise insert fresh manual job
+        cursor.execute(
+            f"""
+            INSERT INTO seen_jobs (
+                id, company, title, location, apply_url, provider, published_date,
+                is_active, is_remote, status, applied_at, notes, direct_search_url,
+                relevance_score, first_seen_at, last_seen_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'custom', 'Recent', 1, ?, ?, ?, ?, ?, 10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            (
+                manual_id,
+                comp,
+                tit,
+                loc,
+                clean_url,
+                1 if "remote" in loc.lower() else 0,
+                status_norm,
+                applied_at,
+                notes or ("Application recorded" if status_norm == "APPLIED" else None),
+                apply_url,
+            ),
+        )
+        conn.commit()
+
+        cursor.execute(f"SELECT rowid AS numeric_id, * FROM seen_jobs WHERE id = ?", (manual_id,))
+        new_row = cursor.fetchone()
+        return dict(new_row) if new_row else {}
 
 
 def purge_or_dismiss_job(

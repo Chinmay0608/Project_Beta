@@ -57,7 +57,7 @@ _is_scanning: bool = False
 _last_scan_timestamp: float = 0.0
 
 DEFAULT_MENU_COMMANDS: list[dict[str, str]] = [
-    {"command": "scan", "description": "Scan active GCCs for entry-level roles"},
+    {"command": "scan", "description": "Scan GCCs (/scan, /scan new, /scan <co>)"},
     {"command": "latest", "description": "View 5 latest verified openings"},
     {"command": "email", "description": "Sync 3 email accounts for job alerts"},
     {"command": "tailor", "description": "Generate tailored PDF resume for job"},
@@ -496,64 +496,91 @@ async def handle_command(
             )
             return
 
-        show_all = arg.strip().lower() in ("all", "--all", "-a")
+        arg_clean = arg.strip().lower()
+        show_all = arg_clean in ("all", "--all", "-a")
+        target_companies = COMPANIES
+        scan_title_label = f"all <b>{len(COMPANIES)}</b> foreign GCCs & tech centers in India"
+        is_custom_scope = False
+
+        m_new = re.match(r"^(?:new|recent)(?:\s+(\d+))?$", arg_clean)
+        if m_new:
+            count_str = m_new.group(1)
+            count = int(count_str) if count_str else 50
+            count = max(1, min(count, len(COMPANIES)))
+            target_companies = COMPANIES[-count:]
+            scan_title_label = f"the last <b>{count}</b> newly added companies"
+            is_custom_scope = True
+        elif show_all:
+            target_companies = COMPANIES
+            scan_title_label = f"all <b>{len(COMPANIES)}</b> foreign GCCs & tech centers in India (including applied/dismissed)"
+        elif arg_clean:
+            matched = [
+                c for c in COMPANIES
+                if arg_clean in c.name.lower() or arg_clean in c.board_token.lower()
+            ]
+            if matched:
+                target_companies = matched
+                scan_title_label = f"<b>{html.escape(matched[0].name)}</b>"
+                is_custom_scope = True
+            else:
+                await send_telegram_reply(
+                    bot_token,
+                    chat_id,
+                    f"❌ Company matching '<code>{html.escape(arg)}</code>' not found in registry ({len(COMPANIES)} companies).\n\n"
+                    f"💡 <i>Tip: Use <code>/scan new</code> to scan recently added companies, or <code>/scan</code> for all.</i>",
+                    client,
+                )
+                return
 
         _is_scanning = True
         try:
-            scan_header = (
-                f"⚡ Initiating full scan across all <b>{len(COMPANIES)}</b> foreign GCCs & tech centers in India (including applied/dismissed)..."
-                if show_all
-                else f"⚡ Initiating scan across all <b>{len(COMPANIES)}</b> foreign GCCs & tech centers in India..."
-            )
+            scan_header = f"⚡ Initiating scan across {scan_title_label}..."
             await send_telegram_reply(
                 bot_token,
                 chat_id,
                 scan_header,
                 client,
             )
-            jobs = await scan_all_companies(companies=COMPANIES)
+            jobs = await scan_all_companies(companies=target_companies)
             new_jobs, _ = filter_new_jobs(jobs, db_path)
             record_jobs(jobs, db_path)
 
-            if not show_all:
-                applied_comps, dismissed_comps = get_applied_and_dismissed_companies(db_path)
-                excluded_comps = applied_comps | dismissed_comps
+            applied_comps, dismissed_comps = get_applied_and_dismissed_companies(db_path)
+            excluded_comps = applied_comps | dismissed_comps if not show_all else set()
 
-                display_jobs = [
-                    j
-                    for j in jobs
-                    if j.company.lower().strip() not in excluded_comps
-                    and getattr(j, "status", "NEW").upper() not in ("APPLIED", "DISMISSED")
-                ]
-                hidden_count = len(jobs) - len(display_jobs)
+            display_jobs = [
+                j
+                for j in jobs
+                if (show_all or j.company.lower().strip() not in excluded_comps)
+                and (show_all or getattr(j, "status", "NEW").upper() not in ("APPLIED", "DISMISSED"))
+            ]
+            hidden_count = len(jobs) - len(display_jobs)
 
-                if display_jobs:
-                    reply = format_jobs_html(display_jobs, "Verified Active Entry-Level Openings")
-                    if hidden_count > 0:
-                        reply += (
-                            f"\n\n<i>💡 {hidden_count} role(s) from already applied or dismissed companies were hidden. "
-                            f"Use <code>/scan all</code> to view all companies.</i>"
-                        )
-                else:
-                    if hidden_count > 0:
-                        reply = (
-                            "ℹ️ <b>Scan Complete</b>\n\n"
-                            "No new unapplied or undismissed roles currently open across tracked GCCs.\n\n"
-                            f"<i>💡 {hidden_count} active role(s) from companies you already applied to or dismissed were hidden. "
-                            f"Use <code>/scan all</code> to view all companies.</i>"
-                        )
-                    else:
-                        reply = (
-                            "ℹ️ <b>Scan Complete</b>\n\n"
-                            "No entry-level tech roles currently open matching strict criteria across all 150+ tracked boards."
-                        )
+            title_hdr = (
+                f"Verified Active Openings ({scan_title_label.replace('<b>', '').replace('</b>', '')})"
+                if is_custom_scope
+                else ("All Verified Active Openings (Including Applied/Dismissed)" if show_all else "Verified Active Entry-Level Openings")
+            )
+
+            if display_jobs:
+                reply = format_jobs_html(display_jobs, title_hdr)
+                if hidden_count > 0 and not show_all:
+                    reply += (
+                        f"\n\n<i>💡 {hidden_count} role(s) from already applied or dismissed companies were hidden. "
+                        f"Use <code>/scan all</code> to view all companies.</i>"
+                    )
             else:
-                if jobs:
-                    reply = format_jobs_html(jobs, "All Verified Active Openings (Including Applied/Dismissed)")
+                if hidden_count > 0 and not show_all:
+                    reply = (
+                        "ℹ️ <b>Scan Complete</b>\n\n"
+                        f"No new unapplied or undismissed roles currently open across {scan_title_label}.\n\n"
+                        f"<i>💡 {hidden_count} active role(s) from companies you already applied to or dismissed were hidden. "
+                        f"Use <code>/scan all</code> to view all companies.</i>"
+                    )
                 else:
                     reply = (
                         "ℹ️ <b>Scan Complete</b>\n\n"
-                        "No entry-level tech roles currently open matching strict criteria across all 150+ tracked boards."
+                        f"No entry-level tech roles currently open matching strict criteria across {scan_title_label}."
                     )
             await send_telegram_reply(bot_token, chat_id, reply, client)
         finally:
@@ -631,6 +658,38 @@ async def handle_command(
 
         jobs = find_jobs_by_selector(target_selector, db_path=db_path)
         if not jobs:
+            clean_sel = re.sub(r"^#", "", target_selector).strip()
+            is_numeric = clean_sel.isdigit() or (
+                clean_sel
+                and all(t.isdigit() for t in re.split(r"[,;\s]+", clean_sel) if t)
+            )
+            if not is_numeric:
+                from gcc_job_radar.ai_agent import parse_apply_target
+                from gcc_job_radar.db import record_manual_job
+
+                comp, tit, parsed_notes = parse_apply_target(target_selector)
+                eff_notes = notes or parsed_notes
+                adhoc_job = record_manual_job(
+                    company=comp,
+                    title=tit,
+                    status="APPLIED",
+                    notes=eff_notes,
+                    db_path=db_path,
+                )
+                if adhoc_job:
+                    rowid = adhoc_job.get("numeric_id") or adhoc_job.get("id")
+                    effective_url, _, _ = resolve_effective_apply_url(adhoc_job)
+                    link_html = f' • <a href="{html.escape(str(effective_url))}">Apply Link</a>' if effective_url else ""
+                    notes_msg = f"\n📝 <b>Notes:</b> <i>{html.escape(eff_notes)}</i>" if eff_notes else ""
+                    reply = (
+                        f"✅ <b>Marked as APPLIED (1):</b>\n\n"
+                        f"• <b>#{rowid}. {html.escape(adhoc_job.get('company', comp))}</b> — {html.escape(adhoc_job.get('title', tit))}{link_html}"
+                        + notes_msg
+                        + "\n\n<i>Application recorded in tracker database. Good luck!</i>"
+                    )
+                    await send_telegram_reply(bot_token, chat_id, reply, client)
+                    return
+
             await send_telegram_reply(
                 bot_token,
                 chat_id,
@@ -1195,13 +1254,51 @@ async def run_bot_listener(
                             )
                             continue
 
-                        logger.info("AI Query: %s from chat_id %s", text.strip(), chat_id)
+                        raw_msg = text.strip()
+                        raw_lower = raw_msg.lower()
+
+                        # Fast-path 1: Natural language scan new
+                        m_scan_new = re.match(
+                            r"^(?:run\s+)?scan\s+(?:the\s+)?(?:new|newly\s+added|recent)(?:\s+companies)?(?:\s+(\d+))?$",
+                            raw_lower,
+                        )
+                        if m_scan_new:
+                            count_val = m_scan_new.group(1)
+                            cmd_str = f"/scan new {count_val}".strip() if count_val else "/scan new"
+                            await handle_command(
+                                command_text=cmd_str,
+                                chat_id=chat_id,
+                                bot_token=bot_token,
+                                allowed_chat_id=allowed_chat_id,
+                                client=client,
+                                db_path=db_path,
+                            )
+                            continue
+
+                        # Fast-path 2: Natural language apply
+                        is_nl_apply = (
+                            re.search(r"\b(?:applied|aoplies|applies)(?:\s+opening)?(?:\s+so\s+mark\s+.*)?$", raw_lower)
+                            or re.match(r"^(?:i\s+mean\s+)?(?:i\s+)?(?:have\s+|already\s+)?(?:applied|applies|apply)\s+(?:to\s+|for\s+)", raw_lower)
+                            or re.match(r"^mark(?:ed)?\s+.+\s+as\s+applied\b", raw_lower)
+                        )
+                        if is_nl_apply:
+                            await handle_command(
+                                command_text=f"/apply {raw_msg}",
+                                chat_id=chat_id,
+                                bot_token=bot_token,
+                                allowed_chat_id=allowed_chat_id,
+                                client=client,
+                                db_path=db_path,
+                            )
+                            continue
+
+                        logger.info("AI Query: %s from chat_id %s", raw_msg, chat_id)
                         try:
-                            console.print(f"[green]AI Query:[/green] [bold]{text.strip()}[/bold] from chat_id [yellow]{chat_id}[/yellow]")
+                            console.print(f"[green]AI Query:[/green] [bold]{raw_msg}[/bold] from chat_id [yellow]{chat_id}[/yellow]")
                         except Exception:
                             pass
                         await send_telegram_chat_action(bot_token, chat_id, client, "typing")
-                        ai_reply = await ask_ai_agent(text.strip(), chat_id=chat_id, db_path=db_path, client=client)
+                        ai_reply = await ask_ai_agent(raw_msg, chat_id=chat_id, db_path=db_path, client=client)
                         await send_telegram_reply(bot_token, chat_id, ai_reply, client)
 
             except asyncio.CancelledError:

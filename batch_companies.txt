@@ -1,0 +1,547 @@
+A10 Networks
+Abacus.AI
+Abnormal Security
+Acceldata
+Accurics
+Acrolinx
+Adarga
+Addepar
+Adverity
+Aembit
+Aerospike
+Agiloft
+Agorai
+Aiven
+Akamai Labs
+Akur8
+Alation
+Aleo
+Allganize
+Alloy Automation
+AlphaSense
+Altair
+Ambarella
+Ambient.ai
+Anaconda
+AngelList
+Anrok
+Ansys
+Anthropic Labs
+Appcues
+AppDynamics
+AppDirect
+Appian Labs
+AppOmni
+Appsmith
+Ardoq
+Armis
+Arrive Logistics
+Articulate
+Asana Labs
+Ascend.io
+Ashby
+Atera
+Attentive Mobile
+AuditBoard
+Augury
+Aurora Solar
+Auth0
+Automox
+Axonius
+Axiom Cloud
+BallerTV
+Baseten
+Beamery
+Beekeeper
+BigCommerce
+BigID
+Biofourmis
+BioRender
+Bitmovin
+Bitwarden
+Blackbird
+BlackLine
+Blameless
+Blend
+BlockFi
+BlueVoyant
+Bolt Financial
+Booksy
+Bowery Farming
+Braze Labs
+Branch
+Brandwatch
+Brightwheel
+Brinqa
+Bristlecone
+Buildkite
+Built Robotics
+Bullhorn
+Busuu
+Butterfly Network
+C3 AI
+Caddi
+Calix
+Cambly
+Candid Health
+Canary Technologies
+CaptivateIQ
+Carbon Health
+CareMessage
+CareRev
+Cart.com
+Castor
+Catalant
+Cedar
+Centrical
+Cerebral
+Chainalysis
+Chariot
+Checkmarx
+Chronosphere
+ChurnZero
+Cinder
+CircleCI Labs
+Clari
+Claroty
+Cleanlab
+Clearbit
+Clio
+Cloudera Labs
+Cloudflare Workers
+Cloudinary
+Cloudsmith
+CloudZero
+Code42
+Codefresh
+Codeium
+CodeSignal
+Codility
+Coda
+Coherent
+Collibra
+Color Health
+Column
+CommerceIQ
+Commvault
+Compass
+ComplyAdvantage
+Compose
+Conductor
+Confluent Labs
+Connecteam
+Contentful
+Contentstack
+Convex
+Copper CRM
+Corelight
+Cority
+Cortex
+Couchbase
+Coveo
+Craft.co
+Cradle
+Cribl
+Crossbeam
+CrowdStrike Labs
+Curai Health
+Customer.io
+CustomerSuccessBox
+Cyara
+CyberArk
+Cyera
+Dagger
+Daloopa
+DataCamp
+Dataiku
+Dataiku Labs
+Dataminr
+DataStax
+Datafold
+Dataiku India
+DataRobot
+Dataiku Ventures
+Datavant
+dbt Labs
+Decagon
+Deepwatch
+Deliverect
+Demandbase
+Dentsu Digital
+Dext
+Dgraph
+Dialpad
+DigitalOcean
+Diligent
+DispatchHealth
+DispatchTrack
+Dixa
+DocPlanner
+Docker Labs
+Docusign Labs
+DoiT International
+Domo
+Doppler
+Dott
+Dremio
+DroneDeploy
+Drata
+Drift
+Druva
+Duolingo Labs
+Dynatrace
+E2open
+Earnix
+Earthmover
+EasyPost
+Elastic Path
+Elementl
+ElevenLabs
+Elinvar
+Emburse
+Encord
+Endor Labs
+EnergyHub
+Engagio
+Enigma
+Enigma Securities
+Enigma Technologies
+Envoy
+Enveda Biosciences
+EquipmentShare
+Ergatta
+Esusu
+Ethos Life
+EvenUp
+Exabeam
+Exotec
+Expel
+Expert360
+Faire
+Fairmatic
+Fathom
+Fetch Robotics
+Fieldwire
+Finch
+Firebolt
+Firstbase
+Fisker
+Five9
+Flatiron Health
+Fleetio
+Flexport
+Flo Health
+Flowdesk
+Fly.io
+Flyhomes
+Forge Global
+Forter
+Foxglove
+Fractal Analytics
+Freightos
+FreightWaves
+Freshpaint
+Front
+FullStory
+Fundbox
+Funding Circle
+G2
+Ganymede Bio
+Gatik
+Gather
+Gem
+GenePeeks
+Genies
+Genoox
+Getaround
+GetYourGuide
+Ginkgo Bioworks
+Glean
+Glia
+Glovo
+GoCardless
+Go1
+GoKwik
+Gong
+GoodRx
+Grafana Labs
+Grammarly
+Grand Rounds
+Gravie
+Greenhouse Software
+Gremlin
+Grid Dynamics
+GrubMarket
+Guardant Health
+Guild Education
+GumGum
+H2O.ai
+HackerOne
+Hadrian
+Halcyon
+Handshake
+Harness
+HashiCorp
+Hazy
+Headspace
+Heap
+Helix
+Helsing
+HighRadius
+Highspot
+Hightouch
+Hive
+HiveMQ
+Holidu
+HoneyBook
+Honeycomb
+Hopin
+Hopsworks
+Hotjar
+Humanloop
+Humane
+Huntress
+HyperionDev
+Hyperscience
+Icertis
+Illumio
+Immuta
+Imply
+Incode
+Incorta
+Index Ventures
+Inflection AI
+InfluxData
+Ingenico Digital
+Insider
+Insilico Medicine
+Instabase
+Instawork
+Intercom
+Interos
+Intrinsic
+Ironclad
+IronNet
+iRhythm
+Iterable
+Jackpocket
+JFrog
+Jobber
+Jupiter Intelligence
+Justworks
+Kalshi
+Karat
+Katana Cloud Inventory
+Katalon
+Keeper Security
+Kforce Digital
+K Health
+Kinetic
+Kin Insurance
+Kinsta
+Klarna
+Klaviyo
+Klook
+Komoot
+Kong
+Konstrukt
+Koho
+Kustomer
+Kyndryl Labs
+Lattice
+LaunchDarkly
+LayerZero
+LeadSquared
+Lemonade
+Lendable
+LendingTree
+Lessen
+Lightmatter
+Lightspeed Commerce
+Lime
+Linear
+Lingoda
+Linktree
+Lithic
+LiveRamp
+Livongo
+Lokalise
+Loom
+Loop Returns
+Lucid Software
+Luminar
+Lusha
+Lyra Health
+Mambu
+Mavrck
+Maxar
+Medallia
+Medable
+Medallion
+Meilisearch
+Memfault
+Mercado Libre
+Merama
+Mercury
+Metabase
+Mews
+M-Files
+Miro
+Mixpanel
+Modern Treasury
+Modulate
+Mogul
+Moloco
+Monte Carlo Data
+MoonPay
+Motive
+Motional
+Mux
+MyCase
+MyFitnessPal
+N26
+Natera Digital
+Navan
+Near Protocol
+Neo4j
+Neon
+NerdWallet
+Nexthink
+Next Insurance
+Nium
+Noibu
+Notion Labs
+Nuro
+Nuvei
+Nylas
+Ocado Technology
+Octopus Energy
+Oklo
+Omada Health
+OneTrust
+Onfido
+OpenGov
+OpenPhone
+Opendoor
+OpenSea
+Optimizely
+Orca Security
+Oscar Health
+OutSystems
+Oyster
+Oura
+Outreach
+Overhaul
+Owner.com
+PagarBook
+PagerDuty
+Papaya Global
+Paradox
+Parallel
+Patreon
+Pave
+Payhawk
+Paymob
+Payoneer
+PayFit
+Pear Therapeutics
+Peloton
+Persona
+Personio
+Petuum
+Phenom
+Photoroom
+Pindrop
+Pipe
+Pipedrive
+Pitch
+PlanetScale
+Plaid
+Plenty
+Pleo
+Pluralsight
+PocketLaw
+Podium
+PointClickCare
+Policygenius
+PolyAI
+PostHog
+Preply
+Primer
+Printful
+Privy
+Procore
+Proton
+Provenance
+Pryon
+Pulse Biosciences
+Qonto
+Qualtrics
+Quantum Machines
+QuantumScape
+QuEra Computing
+Quince
+Quora
+Ramp
+Rapyd
+Recharge
+Rec Room
+Recurly
+Redpanda
+Redis
+Redox
+Reforge
+Relativity Space
+Remitly
+Render
+Replit
+Retool
+Rev.com
+Revolut
+Rho
+Rippling
+Riskified
+Robinhood
+Rocket Lab
+Rockset
+Ro
+Roadie
+Rubrik
+Runa
+Runway
+Salsify
+Samsara
+Sanity
+Scale AI
+Scaler
+Scandit
+Scout Motors
+Scribd
+Sentry
+ServiceTitan
+ShipBob
+Shippo
+Signifyd
+Sift
+Sigma Computing
+Similarweb
+Sisense
+Skydio
+Skyflow
+Snyk
+Socure
+SolarWinds
+SonarSource
+Sorare
+Sourcegraph
+SparkCognition
+Speak
+Spectro Cloud
+StackAdapt
+StackBlitz
+StackHawk
+Starburst
+Starry
+Stash
+SteelSeries
+Superhuman

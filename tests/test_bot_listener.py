@@ -736,9 +736,40 @@ async def test_email_command(tmp_path: Path, sample_jobs: list[JobPosting]) -> N
 
             assert len(captured_messages) >= 2
             # First message is scanning notification
-            assert "Scanning your 3 configured email accounts" in captured_messages[0]["text"]
+            assert "Scanning your 1 configured email account" in captured_messages[0]["text"]
             assert "New Email Job Alerts" in captured_messages[1]["text"]
             assert "Celonis" in captured_messages[1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_email_command_missing_credentials(tmp_path: Path) -> None:
+    """Verify /email command handles missing credentials gracefully with Render instructions."""
+    from tools.ingest_email import MissingEmailCredentialsError
+
+    db_file = tmp_path / "bot_email_missing.db"
+    init_db(db_file)
+
+    captured_messages = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        data = json.loads(request.content.decode("utf-8"))
+        captured_messages.append(data)
+        return httpx.Response(200, json={"ok": True})
+
+    with patch("tools.ingest_email.get_configured_email_accounts", side_effect=MissingEmailCredentialsError("No credentials")):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await handle_command(
+                command_text="/email",
+                chat_id="123456",
+                bot_token="test_token",
+                allowed_chat_id="123456",
+                client=client,
+                db_path=db_file,
+            )
+
+            assert len(captured_messages) == 1
+            assert "Missing Credentials on Render" in captured_messages[0]["text"]
+            assert "EMAIL_USER" in captured_messages[0]["text"]
 
 
 @pytest.mark.asyncio

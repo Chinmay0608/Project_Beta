@@ -255,23 +255,22 @@ def get_configured_email_accounts(
         except Exception as exc:
             logger.debug("Failed reading .env for multiple accounts: %s", exc)
 
-    # 3. Fallback to os.getenv if no accounts were extracted from .env file
+    # 3. Discover accounts from environment variables (EMAIL_USER, EMAIL_USER_2, etc.) if .env had none
     if not accounts:
         env_user = os.getenv("EMAIL_USER")
         env_pass = os.getenv("EMAIL_PASSWORD")
         if env_user and env_pass:
             accounts.append((env_user.strip(), env_pass.strip()))
 
-    # Check for any environment variables like EMAIL_USER_1, EMAIL_PASSWORD_1
-    idx = 1
-    while True:
-        eu = os.getenv(f"EMAIL_USER_{idx}") or os.getenv(f"EMAIL_USER{idx}")
-        ep = os.getenv(f"EMAIL_PASSWORD_{idx}") or os.getenv(f"EMAIL_PASSWORD{idx}")
-        if eu and ep:
-            accounts.append((eu.strip(), ep.strip()))
-            idx += 1
-        else:
-            break
+        for key, val in os.environ.items():
+            m_user = re.match(r"^EMAIL_USER(?:_?(\d+))$", key, re.IGNORECASE)
+            if m_user:
+                suffix = m_user.group(1)
+                pass_key1 = f"EMAIL_PASSWORD_{suffix}"
+                pass_key2 = f"EMAIL_PASSWORD{suffix}"
+                pass_val = os.getenv(pass_key1) or os.getenv(pass_key2)
+                if val and pass_val:
+                    accounts.append((val.strip(), pass_val.strip()))
 
     # Deduplicate by username case-insensitively while preserving insertion order
     seen: set[str] = set()

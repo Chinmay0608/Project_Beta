@@ -887,16 +887,37 @@ async def handle_command(
         await send_telegram_reply(bot_token, chat_id, reply, client)
 
     elif cmd in ("/email", "/emails", "/sync_emails"):
-        await send_telegram_reply(
-            bot_token,
-            chat_id,
-            "📬 <i>Scanning your 3 configured email accounts for job alerts (LinkedIn, Naukri, Indeed, Glassdoor)...</i>",
-            client,
-        )
         try:
-            from tools.ingest_email import sync_email_alerts, get_configured_email_accounts
+            from tools.ingest_email import (
+                MissingEmailCredentialsError,
+                get_configured_email_accounts,
+                sync_email_alerts,
+            )
 
-            accounts = get_configured_email_accounts()
+            accounts = get_configured_email_accounts(env_path=Path(".env"))
+        except MissingEmailCredentialsError:
+            reply = (
+                "⚠️ <b>Email Alerts: Missing Credentials on Render</b>\n\n"
+                "To scan job alerts directly from Telegram, set your credentials in the <b>Render Dashboard</b> (Environment tab):\n\n"
+                "• <code>EMAIL_IMAP_SERVER</code> = <code>imap.gmail.com</code>\n"
+                "• <code>EMAIL_USER</code> = <i>your_email@gmail.com</i>\n"
+                "• <code>EMAIL_PASSWORD</code> = <i>xxxx xxxx xxxx xxxx</i> (16-char Google App Password)\n\n"
+                "<i>For multiple accounts, add:</i>\n"
+                "• <code>EMAIL_USER_2</code>, <code>EMAIL_PASSWORD_2</code>\n"
+                "• <code>EMAIL_USER_3</code>, <code>EMAIL_PASSWORD_3</code>"
+            )
+            await send_telegram_reply(bot_token, chat_id, reply, client)
+            return
+
+        acc_count = len(accounts)
+        scan_msg = (
+            f"📬 <i>Scanning your 3 configured email accounts for job alerts (LinkedIn, Naukri, Indeed, Glassdoor)...</i>"
+            if acc_count == 3
+            else f"📬 <i>Scanning your {acc_count} configured email account{'s' if acc_count > 1 else ''} for job alerts (LinkedIn, Naukri, Indeed, Glassdoor)...</i>"
+        )
+        await send_telegram_reply(bot_token, chat_id, scan_msg, client)
+
+        try:
             jobs = await asyncio.to_thread(
                 sync_email_alerts,
                 days=7,
@@ -916,7 +937,8 @@ async def handle_command(
                 )
         except Exception as exc:
             logger.exception("Error syncing email alerts")
-            reply = f"❌ Error checking email accounts: {html.escape(str(exc))}"
+            clean_err = re.sub(r"\[/?(bold|dim|cyan|red)[^\]]*\]", "", str(exc))
+            reply = f"❌ Error checking email accounts: {html.escape(clean_err)}"
         await send_telegram_reply(bot_token, chat_id, reply, client)
 
     else:

@@ -5532,6 +5532,9 @@ COMPANIES: list[CompanyConfig] = [
     CompanyConfig(name="Tamara", provider=ATSProvider.GREENHOUSE, board_token="tamara"),
     CompanyConfig(name="Browserbase", provider=ATSProvider.ASHBY, board_token="browserbase"),
     CompanyConfig(name="Gallagher", provider=ATSProvider.CUSTOM, board_token="gallagherhq", career_url="https://careers.gallagher.com"),
+    CompanyConfig(name="CloudSEK", provider=ATSProvider.GREENHOUSE, board_token="cloudsek"),
+    CompanyConfig(name="Wysa", provider=ATSProvider.CUSTOM, board_token="wysa", career_url="https://wysa.com/careers"),
+    CompanyConfig(name="TalentSprint", provider=ATSProvider.CUSTOM, board_token="talentsprint", career_url="https://talentsprint.com/careers"),
 ]
 
 # Strict entry-level tech title positive pattern

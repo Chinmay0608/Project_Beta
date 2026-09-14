@@ -1215,3 +1215,74 @@ ClickHouse
 Redpanda Data
 Teleport
 Chainguard
+Flipkart
+Swiggy
+Innovaccer
+CleverTap
+Moneyview
+Fino Payments Bank
+Cashfree Payments
+ZestMoney
+OneCard
+Slice
+Fi Money
+Jupiter
+Niyo
+Smallcase
+Kuvera
+PayNearby
+Signzy
+Decentro
+Setu
+Yubi
+Credgenics
+Lendingkart
+Indifi
+Rupeek
+Stashfin
+BharatX
+Fampay
+Fibe
+Zolve
+Vested Finance
+StockGro
+Jar
+Multipl
+GetVantage
+FinBox
+Vayana Network
+RazorpayX
+Zaggle
+Mswipe
+PayMate
+NeoGrowth
+Flock
+Kapture CX
+Vtiger
+BrowserStack Enterprise
+Zest AI India
+Qapita
+Spyne
+Pepper Content
+WebEngage
+NotifyVisitors
+Whatfix India
+Kissflow India
+Fyle
+SuperOps
+Zluri
+CloudSEK
+Safe Security
+Sequretek
+TAC Security
+Druva India
+Kratikal
+Lucideus
+Indusface
+Appknox
+Inviu
+WiJungle
+CloudifyOps
+Safe Security Labs
+SecureLayer7
+IDfy

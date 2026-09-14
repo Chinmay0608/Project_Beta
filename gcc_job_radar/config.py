@@ -5522,6 +5522,16 @@ COMPANIES: list[CompanyConfig] = [
     CompanyConfig(name="Watershed", provider=ATSProvider.ASHBY, board_token="watershed"),
     CompanyConfig(name="Scaleway", provider=ATSProvider.LEVER, board_token="scaleway"),
     CompanyConfig(name="IONOS", provider=ATSProvider.GREENHOUSE, board_token="ionos"),
+    CompanyConfig(name="Carsales.com", provider=ATSProvider.SMARTRECRUITERS, board_token="carsales"),
+    CompanyConfig(name="Judo Bank", provider=ATSProvider.SMARTRECRUITERS, board_token="judobank"),
+    CompanyConfig(name="ClearPoint", provider=ATSProvider.LEVER, board_token="clearpoint"),
+    CompanyConfig(name="Partly", provider=ATSProvider.SMARTRECRUITERS, board_token="partly"),
+    CompanyConfig(name="Auror", provider=ATSProvider.ASHBY, board_token="auror"),
+    CompanyConfig(name="Halter", provider=ATSProvider.ASHBY, board_token="halter"),
+    CompanyConfig(name="Wētā Workshop", provider=ATSProvider.SMARTRECRUITERS, board_token="wetaworkshop"),
+    CompanyConfig(name="Tamara", provider=ATSProvider.GREENHOUSE, board_token="tamara"),
+    CompanyConfig(name="Browserbase", provider=ATSProvider.ASHBY, board_token="browserbase"),
+    CompanyConfig(name="Gallagher", provider=ATSProvider.CUSTOM, board_token="gallagherhq", career_url="https://careers.gallagher.com"),
 ]
 
 # Strict entry-level tech title positive pattern

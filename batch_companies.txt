@@ -1071,3 +1071,147 @@ OVHcloud
 StackIT
 Leaseweb
 Orange Business
+Telstra
+Commonwealth Bank of Australia
+ANZ
+NAB
+Westpac
+Macquarie Group
+Optus
+Qantas
+REA Group
+Domain Group
+Carsales.com
+Coles Group
+Woolworths Group
+Wesfarmers
+Iress
+Link Group
+Computershare
+Aconex
+Envato
+SafetyCulture
+Judo Bank
+Latitude Financial Services
+Block
+Cochlear
+CSL
+ResMed
+Ramsay Health Care Digital
+BHP Digital
+Rio Tinto Digital
+Fortescue Digital
+Woodside Energy Technology
+WSP Australia
+Codematix
+Datacom
+Spark New Zealand
+One New Zealand
+Trade Me
+Vista Group
+Gallagher
+Pushpay
+Rakon
+Rocket Lab New Zealand
+Fisher & Paykel Healthcare
+Fisher & Paykel Appliances
+Serko
+Invenco by GVR
+Kiwiplan
+Seequent
+Catalyst IT
+Fronde
+Theta
+ClearPoint
+Solnet Solutions
+Sandfield
+Sourced
+Tax Management New Zealand
+LawVu
+Timely
+Melon Health
+Partly
+Auror
+AskNicely
+Halter
+Mint Innovation
+Soul Machines
+Insite Security
+Kami
+Crimson Education
+Education Perfect
+Vend by Lightspeed
+Cogo
+EROAD
+Teletrac Navman New Zealand
+Navman Technology
+Jade Software
+Tait Communications
+Animation Research
+Wētā FX
+Wētā Workshop
+ScriptSense
+Re-Leased
+Noon
+Careem
+Bayzat
+Property Finder
+Dubizzle Group
+Kitopi
+Tabby
+Tamara
+Sarwa
+Yalla Group
+Emerging Markets Property Group
+Souq.com / Amazon UAE
+Anghami
+Mumzworld
+Fetchr
+TruKKer
+Cafu
+Huspy
+Eyewa
+SellAnyCar.com
+Property Shop Investment
+Wasl
+Emirates Integrated Telecommunications Company
+du
+Etisalat by e&
+e& enterprise
+G42
+Presight
+Core42
+Khazna Data Centers
+Injazat
+Technology Development Fund
+Tabreed Digital
+Mashreq Digital
+Emirates NBD Technology
+First Abu Dhabi Bank Technology
+ADCB Technology
+Mashreq Neo
+Wio Bank
+Liv Bank
+Al-Futtaim Technologies
+Al Ghurair Technology
+Majid Al Futtaim Digital
+Landmark Group Technology
+Chalhoub Group Technology
+Apparel Group Technology
+Al Tayer Group Technology
+Emirates Group IT
+DP World Technology
+Jumeirah Group Digital
+Stadium
+Airbyte
+Sierra
+Braintrust
+LangChain
+LlamaIndex
+OpenPipe
+Browserbase
+MotherDuck
+ClickHouse
+Redpanda Data
+Teleport
+Chainguard

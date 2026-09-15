@@ -439,18 +439,13 @@ async def dispatch_notifications(
     if not new_jobs:
         return
 
-    from gcc_job_radar.db import (
-        filter_unalerted_jobs,
-        get_applied_and_dismissed_companies,
-        is_company_excluded,
-        record_dispatched_alerts,
-    )
+    from gcc_job_radar.db import filter_unalerted_jobs, record_dispatched_alerts
 
-    applied_comps, dismissed_comps = get_applied_and_dismissed_companies(db_path)
-    excluded_comps = applied_comps | dismissed_comps
-    if excluded_comps:
-        new_jobs = [j for j in new_jobs if not is_company_excluded(j.company, excluded_comps)]
-
+    # Ensure we only alert on active/new postings, never on individual jobs already marked applied or dismissed
+    new_jobs = [
+        j for j in new_jobs
+        if getattr(j, "status", "NEW").upper() not in ("APPLIED", "DISMISSED")
+    ]
     if not new_jobs:
         return
 

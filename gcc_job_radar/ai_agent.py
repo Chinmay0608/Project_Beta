@@ -1211,12 +1211,12 @@ def format_tool_result_summary(name: str, result: dict[str, Any]) -> str:
         for a in adhoc_comps:
             cname = html.escape(str(a.get("company", "Company")))
             items.append(
-                f"• 🏢 <b>{cname}</b> — <i>Company Suppressed from Future Digests & Scans</i>"
+                f"• 🏢 <b>{cname}</b> — <i>Current opening dismissed (future roles will still be monitored)</i>"
             )
 
         notes = result.get("notes")
         notes_str = f"\n\n📝 <b>Notes:</b> <i>{html.escape(notes)}</i>" if notes else ""
-        footer = "\n\n<i>These companies and postings will no longer appear in scans, alerts, or digests.</i>" if action in ("dismiss", "hide") else ""
+        footer = "\n\n<i>💡 These specific roles won't be shown again, but we will continue searching and alert you whenever these companies post new openings matching your criteria!</i>" if action in ("dismiss", "hide") else ""
         return (header + "\n".join(items) + notes_str + footer).strip()
 
     if name == "get_applied_jobs":

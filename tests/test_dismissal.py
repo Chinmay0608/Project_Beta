@@ -160,3 +160,52 @@ async def test_bot_listener_dismiss_command(temp_db: Path) -> None:
     assert "Tvaram" in sent_text
     assert "Wsp" in sent_text or "WSP" in sent_text
     assert "Betterworks" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_dismiss_role_does_not_block_future_roles(temp_db: Path) -> None:
+    """Ensure dismissing a role does not blacklist the company: future new roles must still be detected and notified."""
+    from gcc_job_radar.db import filter_new_jobs
+    from gcc_job_radar.notifier import dispatch_notifications
+
+    # 1. Old role for Wysa is shown and dismissed
+    old_role = JobPosting(
+        id="gh_wysa_old_1",
+        company="Wysa",
+        title="Associate Full Stack Engineer",
+        location="Bengaluru",
+        apply_url="https://example.com/wysa/old_role",
+        provider=ATSProvider.GREENHOUSE,
+    )
+    record_jobs([old_role], db_path=temp_db)
+    dismiss_selectors_or_companies("Wysa", db_path=temp_db)
+
+    # 2. In future scan, Wysa posts a brand new role
+    new_role = JobPosting(
+        id="gh_wysa_new_2",
+        company="Wysa",
+        title="Junior Software Development Engineer",
+        location="Bengaluru",
+        apply_url="https://example.com/wysa/new_role",
+        provider=ATSProvider.GREENHOUSE,
+    )
+
+    # 3. Verify the new role is identified as NEW (not blocked)
+    new_jobs, _ = filter_new_jobs([new_role], db_path=temp_db)
+    assert len(new_jobs) == 1
+    assert new_jobs[0].title == "Junior Software Development Engineer"
+
+    # 4. Verify notifications are successfully dispatched for the new role
+    with patch("gcc_job_radar.notifier.send_telegram_notification", new_callable=AsyncMock) as mock_send_tg:
+        mock_send_tg.return_value = True
+        await dispatch_notifications(
+            new_jobs=[new_role],
+            telegram_token="dummy_token",
+            telegram_chat_id="12345",
+            db_path=temp_db,
+        )
+        assert mock_send_tg.called
+        dispatched_jobs = mock_send_tg.call_args[0][2]
+        assert len(dispatched_jobs) == 1
+        assert dispatched_jobs[0].company == "Wysa"
+

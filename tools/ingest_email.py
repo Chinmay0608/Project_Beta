@@ -1052,19 +1052,6 @@ def sync_email_alerts(
         f"[*] Qualified [bold green]{len(qualified_postings)}[/bold green] entry-level / fresher roles in India/Remote."
     )
 
-    applied_comps, dismissed_comps = get_applied_and_dismissed_companies(db_path)
-    excluded_comps = applied_comps | dismissed_comps
-    if excluded_comps:
-        filtered_postings = [
-            j for j in qualified_postings if not is_company_excluded(j.company, excluded_comps)
-        ]
-        suppressed_count = len(qualified_postings) - len(filtered_postings)
-        if suppressed_count > 0:
-            console.print(
-                f"[dim]Suppressed {suppressed_count} posting(s) from applied/dismissed companies.[/dim]"
-            )
-        qualified_postings = filtered_postings
-
     # 3. Store qualified postings into database
     if qualified_postings:
         record_jobs(qualified_postings, db_path=db_path)

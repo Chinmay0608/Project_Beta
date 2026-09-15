@@ -636,7 +636,7 @@ async def handle_command(
         for a in adhoc_comps:
             cname = html.escape(str(a.get("company", "Company")))
             items.append(
-                f"• 🏢 <b>{cname}</b> — <i>Company Suppressed from Future Digests & Scans</i>"
+                f"• 🏢 <b>{cname}</b> — <i>Current opening dismissed (future roles will still be monitored)</i>"
             )
 
         total = len(dismissed_jobs) + len(adhoc_comps)
@@ -644,13 +644,13 @@ async def handle_command(
         if dismissed_jobs and not adhoc_comps:
             header = f"🗑️ <b>Dismissed {len(dismissed_jobs)} Job(s):</b>\n\n"
         elif not dismissed_jobs and adhoc_comps:
-            header = f"🗑️ <b>Dismissed {len(adhoc_comps)} Company Target(s):</b>\n\n"
+            header = f"🗑️ <b>Dismissed {len(adhoc_comps)} Role Target(s):</b>\n\n"
         else:
             header = f"🗑️ <b>Dismissed {total} Target(s){comp_str}:</b>\n\n"
         reply = (
             header
             + "\n".join(items)
-            + "\n\n<i>These companies and postings will no longer appear in future scans, email alerts, or daily digests. Use <code>/restore &lt;id or company&gt;</code> to undo.</i>"
+            + "\n\n<i>💡 These specific roles won't be shown again, but we will continue searching and alert you whenever these companies post new openings matching your criteria! Use <code>/restore &lt;id or company&gt;</code> to undo.</i>"
         )
         await send_telegram_reply(bot_token, chat_id, reply, client)
 

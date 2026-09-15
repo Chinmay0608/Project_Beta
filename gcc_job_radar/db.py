@@ -885,6 +885,34 @@ def get_applied_and_dismissed_companies(
     return applied_companies, dismissed_companies
 
 
+def is_company_excluded(company: str, excluded_companies: set[str]) -> bool:
+    """Check if a company matches an applied or dismissed company name.
+
+    Supports:
+    - Exact lowercase match
+    - Substring match (e.g. 'katalystcs' matches 'KATALYSTCS CONSULTING SERVICES PRIVATE LIMITED')
+    - Whole-word regex match for short tokens (e.g. 'wsp' matches 'WSP India')
+    """
+    if not company or not excluded_companies:
+        return False
+    comp_lower = company.lower().strip()
+    if comp_lower in excluded_companies:
+        return True
+
+    for excl in excluded_companies:
+        excl_clean = str(excl).strip().lower()
+        if not excl_clean:
+            continue
+        if len(excl_clean) >= 4 and excl_clean in comp_lower:
+            return True
+        if len(comp_lower) >= 4 and comp_lower in excl_clean:
+            return True
+        if re.search(r"\b" + re.escape(excl_clean) + r"\b", comp_lower):
+            return True
+
+    return False
+
+
 def query_jobs(
     title_keyword: Optional[str] = None,
     location: Optional[str] = None,
@@ -1430,6 +1458,143 @@ def find_jobs_by_selector(
         )
         rows = cursor.fetchall()
         return [dict(r) for r in rows]
+
+
+def dismiss_selectors_or_companies(
+    selector: str,
+    notes: Optional[str] = None,
+    db_path: Optional[Path] = None,
+) -> dict[str, Any]:
+    """Dismiss jobs or companies by ID, comma-separated tokens, or company names.
+
+    If matching jobs exist in seen_jobs, their status is updated to 'DISMISSED'.
+    If a company token does not currently match any rows in seen_jobs (e.g. fresh deploy,
+    alert from another environment, or ephemeral disk), an ad-hoc suppression record is
+    created via record_manual_job(..., status='DISMISSED') so the company is permanently
+    registered as dismissed and filtered out of all future scans, digests, and email alerts.
+
+    Returns:
+        dict with keys:
+            - status: "success" or "empty"
+            - dismissed_jobs: list of dicts for jobs marked DISMISSED
+            - dismissed_adhoc: list of dicts for ad-hoc company suppressions created
+            - dismissed_companies: list of all company names affected
+            - total_jobs: int
+            - total_adhoc: int
+    """
+    if not selector or not str(selector).strip():
+        return {
+            "status": "empty",
+            "dismissed_jobs": [],
+            "dismissed_adhoc": [],
+            "dismissed_companies": [],
+            "total_jobs": 0,
+            "total_adhoc": 0,
+        }
+
+    init_db(db_path)
+    target_path = get_db_path(db_path)
+    raw = str(selector).strip()
+
+    # Split into candidate tokens by comma, semicolon, newline, or 'and'/'&'
+    sub_tokens = [
+        s.strip()
+        for s in re.split(r"[,;\n]|\s+(?:and|&)\s+", raw, flags=re.IGNORECASE)
+        if s.strip() and s.lower() not in ("and", "&", "the")
+    ]
+
+    if not sub_tokens:
+        sub_tokens = [raw]
+
+    dismissed_jobs: list[dict[str, Any]] = []
+    dismissed_adhoc: list[dict[str, Any]] = []
+    dismissed_companies: set[str] = set()
+    processed_job_ids: set[str] = set()
+
+    with sqlite3.connect(target_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen_jobs'")
+        table_name = "seen_jobs" if cursor.fetchone() else "jobs"
+
+        for tok in sub_tokens:
+            tok_clean = tok.strip().strip("'").strip('"').strip("`")
+            if not tok_clean:
+                continue
+
+            clean_num = re.sub(r"^#", "", tok_clean).strip()
+            if clean_num.isdigit():
+                # Direct numeric job ID
+                cursor.execute(
+                    f"SELECT rowid AS numeric_id, * FROM {table_name} WHERE rowid = ? OR id = ? LIMIT 1",
+                    (int(clean_num), clean_num),
+                )
+                r = cursor.fetchone()
+                if r:
+                    jd = dict(r)
+                    jid = str(jd["id"])
+                    if jid not in processed_job_ids:
+                        processed_job_ids.add(jid)
+                        rowid = jd.get("numeric_id") or jid
+                        mark_job_status(job_id=rowid, status="DISMISSED", notes=notes, db_path=db_path)
+                        jd["status"] = "DISMISSED"
+                        dismissed_jobs.append(jd)
+                        if jd.get("company"):
+                            dismissed_companies.add(jd["company"])
+                continue
+
+            # Text token: search for matching company or title in seen_jobs
+            term = f"%{tok_clean.lower()}%"
+            cursor.execute(
+                f"""
+                SELECT rowid AS numeric_id, * FROM {table_name}
+                WHERE lower(company) LIKE ? OR lower(title) LIKE ?
+                ORDER BY last_seen_at DESC LIMIT 50
+                """,
+                (term, term),
+            )
+            matched_rows = cursor.fetchall()
+
+            if matched_rows:
+                for r in matched_rows:
+                    jd = dict(r)
+                    jid = str(jd["id"])
+                    if jid not in processed_job_ids:
+                        processed_job_ids.add(jid)
+                        rowid = jd.get("numeric_id") or jid
+                        mark_job_status(job_id=rowid, status="DISMISSED", notes=notes, db_path=db_path)
+                        jd["status"] = "DISMISSED"
+                        dismissed_jobs.append(jd)
+                        if jd.get("company"):
+                            dismissed_companies.add(jd["company"])
+            else:
+                # No rows exist yet for this company! Create an ad-hoc dismissal record
+                comp_display = tok_clean if any(c.isupper() for c in tok_clean) else tok_clean.title()
+                adhoc_job = record_manual_job(
+                    company=comp_display,
+                    title="All Roles",
+                    status="DISMISSED",
+                    notes=notes or "Company dismissed by user",
+                    db_path=db_path,
+                )
+                if adhoc_job:
+                    rowid = adhoc_job.get("numeric_id") or adhoc_job.get("id")
+                    dismissed_adhoc.append({
+                        "id": rowid,
+                        "company": comp_display,
+                        "title": "All Roles (Suppressed)",
+                        "status": "DISMISSED",
+                    })
+                    dismissed_companies.add(comp_display)
+
+    return {
+        "status": "success",
+        "dismissed_jobs": dismissed_jobs,
+        "dismissed_adhoc": dismissed_adhoc,
+        "dismissed_companies": sorted(dismissed_companies),
+        "total_jobs": len(dismissed_jobs),
+        "total_adhoc": len(dismissed_adhoc),
+    }
 
 
 def is_email_seen(

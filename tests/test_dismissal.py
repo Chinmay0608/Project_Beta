@@ -1,0 +1,162 @@
+import pytest
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+from gcc_job_radar.db import (
+    dismiss_selectors_or_companies,
+    get_applied_and_dismissed_companies,
+    init_db,
+    is_company_excluded,
+    mark_job_status,
+    record_jobs,
+)
+from gcc_job_radar.models import ATSProvider, JobPosting
+
+
+@pytest.fixture
+def temp_db(tmp_path: Path) -> Path:
+    db_file = tmp_path / "test_dismiss.db"
+    init_db(db_file)
+    return db_file
+
+
+def test_is_company_excluded() -> None:
+    excluded = {"wysa", "katalystcs", "wsp", "betterworks"}
+
+    # Exact lowercase match
+    assert is_company_excluded("wysa", excluded) is True
+    assert is_company_excluded("Wysa", excluded) is True
+    assert is_company_excluded("WSP", excluded) is True
+
+    # Substring / Long form matches
+    assert is_company_excluded("KATALYSTCS CONSULTING SERVICES PRIVATE LIMITED", excluded) is True
+    assert is_company_excluded("WSP India Pvt Ltd", excluded) is True
+    assert is_company_excluded("Betterworks Inc", excluded) is True
+
+    # Unrelated companies should NOT match
+    assert is_company_excluded("Google", excluded) is False
+    assert is_company_excluded("Microsoft", excluded) is False
+    assert is_company_excluded("Amazon", excluded) is False
+
+
+def test_dismiss_single_and_multiple_numeric_ids(temp_db: Path) -> None:
+    job1 = JobPosting(
+        id="gh_1",
+        company="Company A",
+        title="Role 1",
+        location="Bengaluru",
+        apply_url="https://example.com/1",
+        provider=ATSProvider.GREENHOUSE,
+    )
+    job2 = JobPosting(
+        id="gh_2",
+        company="Company B",
+        title="Role 2",
+        location="Bengaluru",
+        apply_url="https://example.com/2",
+        provider=ATSProvider.GREENHOUSE,
+    )
+    record_jobs([job1, job2], db_path=temp_db)
+
+    # Dismiss by numeric ID #1
+    res1 = dismiss_selectors_or_companies("1", db_path=temp_db)
+    assert res1["status"] == "success"
+    assert res1["total_jobs"] == 1
+    assert "gh_1" in res1["dismissed_jobs"][0]["id"]
+
+    # Dismiss by numeric ID #2
+    res2 = dismiss_selectors_or_companies("#2", db_path=temp_db)
+    assert res2["status"] == "success"
+    assert res2["total_jobs"] == 1
+    assert "gh_2" in res2["dismissed_jobs"][0]["id"]
+
+
+def test_dismiss_existing_company_jobs(temp_db: Path) -> None:
+    job1 = JobPosting(
+        id="gh_wysa_1",
+        company="Wysa",
+        title="Associate Full Stack Engineer",
+        location="Bengaluru",
+        apply_url="https://example.com/wysa1",
+        provider=ATSProvider.GREENHOUSE,
+    )
+    job2 = JobPosting(
+        id="gh_wysa_2",
+        company="Wysa",
+        title="Junior Backend Developer",
+        location="Bengaluru",
+        apply_url="https://example.com/wysa2",
+        provider=ATSProvider.GREENHOUSE,
+    )
+    record_jobs([job1, job2], db_path=temp_db)
+
+    res = dismiss_selectors_or_companies("Wysa", db_path=temp_db)
+    assert res["status"] == "success"
+    assert res["total_jobs"] == 2
+    assert "Wysa" in res["dismissed_companies"]
+
+    applied, dismissed = get_applied_and_dismissed_companies(temp_db)
+    assert "wysa" in dismissed
+
+
+def test_dismiss_adhoc_multi_companies_on_empty_db(temp_db: Path) -> None:
+    """Verify that dismissing companies not yet present in SQLite creates adhoc suppressions."""
+    target_str = "wysa, katalystcs, tvaram, WSP, betterworks"
+    res = dismiss_selectors_or_companies(target_str, db_path=temp_db)
+
+    assert res["status"] == "success"
+    assert res["total_adhoc"] == 5
+    assert len(res["dismissed_companies"]) == 5
+
+    applied, dismissed = get_applied_and_dismissed_companies(temp_db)
+    assert "wysa" in dismissed
+    assert "katalystcs" in dismissed
+    assert "tvaram" in dismissed
+    assert "wsp" in dismissed
+    assert "betterworks" in dismissed
+
+
+@pytest.mark.asyncio
+async def test_ai_agent_manage_job_status_dismiss(temp_db: Path) -> None:
+    from gcc_job_radar.ai_agent import execute_tool
+
+    res = await execute_tool(
+        "manage_job_status",
+        {"action": "dismiss", "target": "wysa, katalystcs, tvaram, WSP, betterworks"},
+        db_path=temp_db,
+    )
+
+    assert res["status"] == "success"
+    assert res["action"] == "dismiss"
+    assert res["count"] == 5
+    assert len(res["companies"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_bot_listener_dismiss_command(temp_db: Path) -> None:
+    from gcc_job_radar.bot_listener import handle_command
+
+    mock_client = AsyncMock()
+    mock_post = AsyncMock()
+    mock_post.return_value.status_code = 200
+    mock_client.post = mock_post
+
+    await handle_command(
+        command_text="/dismiss wysa, katalystcs, tvaram, WSP, betterworks",
+        chat_id="12345",
+        bot_token="fake_token",
+        allowed_chat_id="12345",
+        client=mock_client,
+        db_path=temp_db,
+    )
+
+    assert mock_post.called
+    sent_payload = mock_post.call_args[1]["json"]
+    sent_text = sent_payload["text"]
+
+    assert "Dismissed" in sent_text
+    assert "Wysa" in sent_text
+    assert "Katalystcs" in sent_text or "katalystcs" in sent_text.lower()
+    assert "Tvaram" in sent_text
+    assert "Wsp" in sent_text or "WSP" in sent_text
+    assert "Betterworks" in sent_text

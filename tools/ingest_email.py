@@ -37,7 +37,9 @@ if str(ROOT_DIR) not in sys.path:
 
 from gcc_job_radar.db import (
     filter_unseen_email_uids,
+    get_applied_and_dismissed_companies,
     init_db,
+    is_company_excluded,
     record_jobs,
     record_seen_email_uids,
 )
@@ -1049,6 +1051,19 @@ def sync_email_alerts(
     console.print(
         f"[*] Qualified [bold green]{len(qualified_postings)}[/bold green] entry-level / fresher roles in India/Remote."
     )
+
+    applied_comps, dismissed_comps = get_applied_and_dismissed_companies(db_path)
+    excluded_comps = applied_comps | dismissed_comps
+    if excluded_comps:
+        filtered_postings = [
+            j for j in qualified_postings if not is_company_excluded(j.company, excluded_comps)
+        ]
+        suppressed_count = len(qualified_postings) - len(filtered_postings)
+        if suppressed_count > 0:
+            console.print(
+                f"[dim]Suppressed {suppressed_count} posting(s) from applied/dismissed companies.[/dim]"
+            )
+        qualified_postings = filtered_postings
 
     # 3. Store qualified postings into database
     if qualified_postings:

@@ -2631,7 +2631,7 @@ COMPANIES: list[CompanyConfig] = [
     CompanyConfig(name="Justworks (SmartRecruiters)", provider=ATSProvider.SMARTRECRUITERS, board_token="justworks"),
     CompanyConfig(name="Justworks", provider=ATSProvider.GREENHOUSE, board_token="justworks"),
     CompanyConfig(name="Binance - Sanctions & CTF Investigator", provider=ATSProvider.LEVER, board_token="binance"),
-    CompanyConfig(name="Shield AI", provider=ATSProvider.LEVER, board_token="shieldai"),
+    CompanyConfig(name="Shield AI (Lever)", provider=ATSProvider.LEVER, board_token="shieldai"),
     CompanyConfig(name="Wing Assistant - Customer Service Representative (CSR", provider=ATSProvider.LEVER, board_token="getwingapp"),
     CompanyConfig(name="Bluelight Consulting - React Engineer - Remote, Latin America", provider=ATSProvider.LEVER, board_token="bluelightconsulting"),
     CompanyConfig(name="Welo Global - Generative AI Analyst | Romanian (Romania", provider=ATSProvider.LEVER, board_token="weloglobal"),

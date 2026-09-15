@@ -61,7 +61,7 @@ SYSTEM_PROMPT = (
     "- Invoke `query_jobs` when the user is searching for open job listings in the database by title, keyword, city, or company name (e.g. 'BlackRock', 'Flipkart', 'find python roles in Bangalore'). If `query_jobs` returns 0 jobs for a requested company or if the user asks to scan, check, or refresh active openings at a specific company (e.g. 'check Databricks live', 'scan Celonis', 'add/check BlackRock', 'check Flipkart'), invoke `check_company_live` to fetch live openings directly from the company's verified ATS board.\n"
     "- Use `get_applied_jobs` whenever the user asks for their applied jobs, application history, applied sheet, applied list, or asks 'where are the rest of my applications'. ALWAYS invoke `get_applied_jobs` to retrieve the authentic list of applied jobs from the database instead of guessing from recent chat context.\n"
     "- Use `get_dismissed_jobs` whenever the user asks for dismissed jobs, dismissed companies, hidden jobs, 'name of all', 'names of all companies', 'list all dismissed', or asks which companies/roles have been dismissed. ALWAYS invoke `get_dismissed_jobs` to retrieve the comprehensive list of ALL dismissed companies and total count from the database instead of guessing or listing only 4-5 from recent chat context.\n"
-    "- Use `manage_job_status` when the user asks to dismiss, hide, apply, mark as applied, or restore/undismiss jobs by ID number (e.g. 'dismiss job 1 and 4') or company name (e.g. 'dismiss Devmani Traders', 'mark BT Group as applied', 'restore job 2', 'applied to uipath, celonis').\n"
+    "- Use `manage_job_status` when the user asks to dismiss, hide, apply, mark as applied, or restore/undismiss jobs by ID number (e.g. 'dismiss job 1 and 4') or company name (e.g. 'dismiss Devmani Traders', 'mark BT Group as applied', 'restore job 2', 'applied to uipath, celonis', 'dismiss wysa, katalystcs, tvaram, WSP, betterworks'). Dismissing companies by name permanently suppresses them from future scans, email alerts, and daily digests, even if they have no currently active listings in the local database.\n"
     "- Use `tailor_job_resume` when the user asks to tailor, customize, adapt, or generate a resume/CV for a specific job (e.g. 'tailor my resume for Flipkart', 'generate a resume for job 1', 'tailor resume for Amazon SDE-1').\n"
     "- Use `sync_email_jobs` whenever the user asks to scan, check, go through, or ingest job alert emails from their configured email accounts.\n"
     "- FILTERING APPLIED AND DISMISSED COMPANIES: By default, NEVER show or suggest roles or company names that the user has already marked as APPLIED or DISMISSED, unless the user specifically asks for 'all' (e.g. 'show all', 'all companies', 'include dismissed'). `query_jobs` and `get_configured_companies` accept `include_all`: only set `include_all=True` when specifically asked for all companies/jobs.\n\n"
@@ -754,6 +754,37 @@ async def execute_tool(
         target = str(args.get("target", "")).strip()
         notes = args.get("notes")
 
+        if action in ("dismiss", "hide"):
+            from gcc_job_radar.db import dismiss_selectors_or_companies
+
+            dismiss_res = dismiss_selectors_or_companies(target, notes=notes, db_path=db_path)
+            updated_jobs = []
+            for j in dismiss_res.get("dismissed_jobs", []):
+                rowid = j.get("numeric_id") or j.get("id")
+                eff_url, _, _ = resolve_effective_apply_url(j)
+                updated_jobs.append({
+                    "id": rowid,
+                    "company": j.get("company", "Unknown"),
+                    "title": j.get("title", "Role"),
+                    "status": "DISMISSED",
+                    "apply_url": eff_url or str(j.get("apply_url") or ""),
+                })
+
+            adhoc_items = dismiss_res.get("dismissed_adhoc", [])
+            all_comps = dismiss_res.get("dismissed_companies", [])
+            total_count = len(updated_jobs) + len(adhoc_items)
+
+            return {
+                "status": "success",
+                "action": action,
+                "target_status": "DISMISSED",
+                "count": total_count,
+                "jobs": updated_jobs,
+                "adhoc_companies": adhoc_items,
+                "companies": all_comps,
+                "notes": notes,
+            }
+
         jobs = find_jobs_by_selector(target, db_path=db_path)
         if not jobs:
             clean_sel = re.sub(r"^#", "", target).strip()
@@ -799,7 +830,7 @@ async def execute_tool(
                 "jobs": [],
             }
 
-        target_status = "APPLIED" if action == "apply" else ("DISMISSED" if action in ("dismiss", "hide") else "NEW")
+        target_status = "APPLIED" if action == "apply" else "NEW"
         updated_jobs = []
         for j in jobs:
             rowid = j.get("numeric_id") or j.get("id")
@@ -1145,7 +1176,8 @@ def format_tool_result_summary(name: str, result: dict[str, Any]) -> str:
     if name == "manage_job_status":
         action = result.get("action", "").lower()
         jobs = result.get("jobs", [])
-        if not jobs:
+        adhoc_comps = result.get("adhoc_companies", [])
+        if not jobs and not adhoc_comps:
             return f"⚠️ {html.escape(result.get('message', 'No matching jobs found.'))}"
 
         if action == "apply":
@@ -1153,7 +1185,13 @@ def format_tool_result_summary(name: str, result: dict[str, Any]) -> str:
             header = f"{emoji} <b>Marked as APPLIED ({len(jobs)}):</b>\n\n"
         elif action in ("dismiss", "hide"):
             emoji = "🗑️"
-            header = f"{emoji} <b>Dismissed {len(jobs)} Job(s):</b>\n\n"
+            if jobs and not adhoc_comps:
+                header = f"{emoji} <b>Dismissed {len(jobs)} Job(s):</b>\n\n"
+            elif not jobs and adhoc_comps:
+                header = f"{emoji} <b>Dismissed {len(adhoc_comps)} Company Target(s):</b>\n\n"
+            else:
+                total = len(jobs) + len(adhoc_comps)
+                header = f"{emoji} <b>Dismissed {total} Target(s) ({len(jobs)} job(s), {len(adhoc_comps)} company/companies):</b>\n\n"
         else:
             emoji = "🔄"
             header = f"{emoji} <b>Restored {len(jobs)} Job(s) to NEW:</b>\n\n"
@@ -1165,13 +1203,21 @@ def format_tool_result_summary(name: str, result: dict[str, Any]) -> str:
                 if j.get("apply_url")
                 else ""
             )
+            sub_label = " <i>(Job Dismissed)</i>" if action in ("dismiss", "hide") else ""
             items.append(
-                f"• <b>#{j.get('id')}. {html.escape(j.get('company', 'Unknown'))}</b> — {html.escape(j.get('title', 'Role'))}{link}"
+                f"• <b>#{j.get('id')}. {html.escape(j.get('company', 'Unknown'))}</b> — {html.escape(j.get('title', 'Role'))}{sub_label}{link}"
+            )
+
+        for a in adhoc_comps:
+            cname = html.escape(str(a.get("company", "Company")))
+            items.append(
+                f"• 🏢 <b>{cname}</b> — <i>Company Suppressed from Future Digests & Scans</i>"
             )
 
         notes = result.get("notes")
         notes_str = f"\n\n📝 <b>Notes:</b> <i>{html.escape(notes)}</i>" if notes else ""
-        return (header + "\n".join(items) + notes_str).strip()
+        footer = "\n\n<i>These companies and postings will no longer appear in scans, alerts, or digests.</i>" if action in ("dismiss", "hide") else ""
+        return (header + "\n".join(items) + notes_str + footer).strip()
 
     if name == "get_applied_jobs":
         jobs = result.get("jobs", [])

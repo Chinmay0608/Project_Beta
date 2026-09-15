@@ -605,33 +605,52 @@ async def handle_command(
                 "Examples:\n"
                 "• <code>/dismiss 1</code>\n"
                 "• <code>/dismiss 1, 2, 4</code>\n"
-                "• <code>/dismiss Devmani Traders</code>",
+                "• <code>/dismiss wysa, katalystcs, tvaram, WSP, betterworks</code>",
                 client,
             )
             return
 
-        jobs = find_jobs_by_selector(arg, db_path=db_path)
-        if not jobs:
+        from gcc_job_radar.db import dismiss_selectors_or_companies
+
+        res = dismiss_selectors_or_companies(arg, db_path=db_path)
+        dismissed_jobs = res.get("dismissed_jobs", [])
+        adhoc_comps = res.get("dismissed_adhoc", [])
+        all_comps = res.get("dismissed_companies", [])
+
+        if not dismissed_jobs and not adhoc_comps:
             await send_telegram_reply(
                 bot_token,
                 chat_id,
-                f"❌ No jobs found matching '<code>{html.escape(arg)}</code>'.\nUse <code>/latest</code> to check active job IDs.",
+                f"❌ No valid targets provided in '<code>{html.escape(arg)}</code>'.",
                 client,
             )
             return
 
-        dismissed_list = []
-        for j in jobs:
+        items = []
+        for j in dismissed_jobs:
             rowid = j.get("numeric_id") or j.get("id")
-            mark_job_status(job_id=rowid, status="DISMISSED", db_path=db_path)
-            dismissed_list.append(
-                f"• <b>#{rowid}. {html.escape(j.get('company', 'Unknown'))}</b> — {html.escape(j.get('title', 'Role'))}"
+            items.append(
+                f"• <b>#{rowid}. {html.escape(j.get('company', 'Unknown'))}</b> — {html.escape(j.get('title', 'Role'))} <i>(Job Dismissed)</i>"
             )
 
+        for a in adhoc_comps:
+            cname = html.escape(str(a.get("company", "Company")))
+            items.append(
+                f"• 🏢 <b>{cname}</b> — <i>Company Suppressed from Future Digests & Scans</i>"
+            )
+
+        total = len(dismissed_jobs) + len(adhoc_comps)
+        comp_str = f" across {len(all_comps)} company/companies" if all_comps else ""
+        if dismissed_jobs and not adhoc_comps:
+            header = f"🗑️ <b>Dismissed {len(dismissed_jobs)} Job(s):</b>\n\n"
+        elif not dismissed_jobs and adhoc_comps:
+            header = f"🗑️ <b>Dismissed {len(adhoc_comps)} Company Target(s):</b>\n\n"
+        else:
+            header = f"🗑️ <b>Dismissed {total} Target(s){comp_str}:</b>\n\n"
         reply = (
-            f"🗑️ <b>Dismissed {len(dismissed_list)} Job(s):</b>\n\n"
-            + "\n".join(dismissed_list)
-            + "\n\n<i>These postings will no longer appear in scans or active listings. Use <code>/restore &lt;id&gt;</code> to undo.</i>"
+            header
+            + "\n".join(items)
+            + "\n\n<i>These companies and postings will no longer appear in future scans, email alerts, or daily digests. Use <code>/restore &lt;id or company&gt;</code> to undo.</i>"
         )
         await send_telegram_reply(bot_token, chat_id, reply, client)
 
@@ -1313,6 +1332,35 @@ async def run_bot_listener(
                                 db_path=db_path,
                             )
                             continue
+
+                        # Fast-path 3: Natural language dismiss / hide
+                        m_nl_dismiss = re.match(
+                            r"^(?:please\s+)?(?:dismiss|hide|ignore|remove|drop)\s+(.+)$",
+                            raw_lower,
+                        )
+                        if m_nl_dismiss:
+                            dismiss_target = re.sub(
+                                r"^(?:please\s+)?(?:dismiss|hide|ignore|remove|drop)\s+",
+                                "",
+                                raw_msg,
+                                flags=re.IGNORECASE,
+                            ).strip()
+                            dismiss_target = re.sub(
+                                r"\s+(?:from\s+(?:radar|tracker)|roles?|jobs?)$",
+                                "",
+                                dismiss_target,
+                                flags=re.IGNORECASE,
+                            ).strip()
+                            if dismiss_target:
+                                await handle_command(
+                                    command_text=f"/dismiss {dismiss_target}",
+                                    chat_id=chat_id,
+                                    bot_token=bot_token,
+                                    allowed_chat_id=allowed_chat_id,
+                                    client=client,
+                                    db_path=db_path,
+                                )
+                                continue
 
                         logger.info("AI Query: %s from chat_id %s", raw_msg, chat_id)
                         try:

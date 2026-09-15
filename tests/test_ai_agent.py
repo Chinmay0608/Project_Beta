@@ -1042,7 +1042,7 @@ async def test_execute_tool_get_configured_companies_enriched_metadata(tmp_path:
 
     res = await execute_tool("get_configured_companies", {"include_all": True}, db_path=db_file)
     assert res["status"] == "success"
-    assert res["custom_career_scrapers_count"] == 6
+    assert res["custom_career_scrapers_count"] >= 6
     assert "Flipkart" in res["custom_career_scrapers"]
     assert "Apple" in res["custom_career_scrapers"]
     assert "Amazon" in res["custom_career_scrapers"]

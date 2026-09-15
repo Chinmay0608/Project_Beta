@@ -439,7 +439,20 @@ async def dispatch_notifications(
     if not new_jobs:
         return
 
-    from gcc_job_radar.db import filter_unalerted_jobs, record_dispatched_alerts
+    from gcc_job_radar.db import (
+        filter_unalerted_jobs,
+        get_applied_and_dismissed_companies,
+        is_company_excluded,
+        record_dispatched_alerts,
+    )
+
+    applied_comps, dismissed_comps = get_applied_and_dismissed_companies(db_path)
+    excluded_comps = applied_comps | dismissed_comps
+    if excluded_comps:
+        new_jobs = [j for j in new_jobs if not is_company_excluded(j.company, excluded_comps)]
+
+    if not new_jobs:
+        return
 
     # Fallback to environment variables
     discord_url = (discord_webhook or os.getenv("DISCORD_WEBHOOK_URL") or "").strip()
